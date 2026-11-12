@@ -77,6 +77,11 @@ export function DetectionList({
                         style={{ backgroundColor: color }}
                       />
                       <span className="detection-label-name">{item.label}</span>
+                      {item.track_id !== undefined && item.track_id !== null && (
+                        <span className="detection-track-id">
+                          Track #{item.track_id}
+                        </span>
+                      )}
                       <span className="detection-class-id">
                         ID #{item.class_id}
                       </span>

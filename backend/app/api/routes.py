@@ -21,6 +21,7 @@ from app.schemas.detection import (
     DetectionResponse,
     ErrorResponse,
     HealthResponse,
+    ResetTrackResponse,
 )
 from app.services.detector import YOLOObjectDetector
 
@@ -79,6 +80,22 @@ async def list_classes(
         count=len(classes),
         classes=classes,
         class_names=ordered_names,
+    )
+
+
+@router.post(
+    "/track/reset",
+    response_model=ResetTrackResponse,
+    summary="Reset tracker states and object tracking IDs",
+)
+async def reset_tracker(
+    detector: YOLOObjectDetector = Depends(get_detector),
+) -> ResetTrackResponse:
+    """Reset the internal ByteTrack tracker states."""
+    detector.reset_tracker()
+    return ResetTrackResponse(
+        status="ok",
+        message="Tracker state successfully reset",
     )
 
 

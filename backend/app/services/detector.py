@@ -229,6 +229,27 @@ class YOLOObjectDetector:
         self.model = None
         self.model_loaded = False
 
+    def reset_tracker(self) -> None:
+        """Reset internal ByteTrack tracking state and track IDs."""
+        if (
+            self.model is not None
+            and hasattr(self.model, "predictor")
+            and self.model.predictor is not None
+        ):
+            trackers = getattr(self.model.predictor, "trackers", [])
+            for tracker in trackers:
+                if hasattr(tracker, "reset"):
+                    try:
+                        tracker.reset()
+                    except Exception as exc:
+                        logger.warning("Error calling tracker.reset(): %s", exc)
+                if hasattr(tracker, "reset_id"):
+                    try:
+                        tracker.reset_id()
+                    except Exception as exc:
+                        logger.warning("Error calling tracker.reset_id(): %s", exc)
+            logger.info("Tracker states have been reset.")
+
     def get_classes(self) -> Dict[int, str]:
         """Return mapping of supported class IDs to class labels."""
         return dict(self.classes)
@@ -272,15 +293,33 @@ class YOLOObjectDetector:
 
         # Run YOLO inference and time execution
         start_time = time.perf_counter()
+        results = None
         try:
-            results = self.model.predict(
-                source=frame,
-                conf=conf_threshold,
-                iou=self.iou_threshold,
-                max_det=self.max_detections,
-                device=self.device,
-                verbose=False,
-            )
+            if hasattr(self.model, "track"):
+                try:
+                    results = self.model.track(
+                        source=frame,
+                        conf=conf_threshold,
+                        iou=self.iou_threshold,
+                        max_det=self.max_detections,
+                        device=self.device,
+                        persist=True,
+                        tracker="bytetrack.yaml",
+                        verbose=False,
+                    )
+                except Exception as track_exc:
+                    logger.warning("YOLO track call failed (%s). Falling back to predict.", track_exc)
+                    results = None
+
+            if results is None:
+                results = self.model.predict(
+                    source=frame,
+                    conf=conf_threshold,
+                    iou=self.iou_threshold,
+                    max_det=self.max_detections,
+                    device=self.device,
+                    verbose=False,
+                )
         except Exception as exc:
             logger.error("YOLO inference error: %s", exc)
             raise RuntimeError("Model inference failed on the provided image.") from exc
@@ -295,6 +334,7 @@ class YOLOObjectDetector:
                 xyxy_tensor = boxes.xyxy
                 conf_tensor = boxes.conf
                 cls_tensor = boxes.cls
+                id_tensor = getattr(boxes, "id", None)
 
                 xyxy_list = (
                     xyxy_tensor.cpu().numpy().tolist()
@@ -311,8 +351,15 @@ class YOLOObjectDetector:
                     if hasattr(cls_tensor, "cpu")
                     else np.asarray(cls_tensor).tolist()
                 )
+                id_list = None
+                if id_tensor is not None:
+                    id_list = (
+                        id_tensor.cpu().numpy().tolist()
+                        if hasattr(id_tensor, "cpu")
+                        else np.asarray(id_tensor).tolist()
+                    )
 
-                for coords, score, cls_idx in zip(xyxy_list, conf_list, cls_list):
+                for idx, (coords, score, cls_idx) in enumerate(zip(xyxy_list, conf_list, cls_list)):
                     score_val = float(score)
                     if score_val < conf_threshold:
                         continue
@@ -325,12 +372,20 @@ class YOLOObjectDetector:
                     x2 = round(max(0.0, min(float(width), float(coords[2]))), 2)
                     y2 = round(max(0.0, min(float(height), float(coords[3]))), 2)
 
+                    track_id: Optional[int] = None
+                    if id_list is not None and idx < len(id_list) and id_list[idx] is not None:
+                        try:
+                            track_id = int(id_list[idx])
+                        except (ValueError, TypeError):
+                            track_id = None
+
                     detections.append(
                         DetectionItem(
                             label=label,
                             class_id=class_id,
                             confidence=round(score_val, 4),
                             bbox=[x1, y1, x2, y2],
+                            track_id=track_id,
                         )
                     )
 

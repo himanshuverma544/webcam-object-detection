@@ -84,6 +84,22 @@ class DetectionItem(BaseModel):
         description="Bounding box coordinates [x1, y1, x2, y2] in pixels relative to the uploaded image",
         examples=[[120.5, 45.0, 340.2, 410.8]],
     )
+    track_id: Optional[int] = Field(
+        default=None,
+        description="Persistent tracking ID assigned by ByteTrack across video frames",
+        examples=[1],
+    )
+
+
+class ResetTrackResponse(BaseModel):
+    """Response returned when resetting tracker state."""
+
+    status: str = Field(..., description="Execution status ('ok')", examples=["ok"])
+    message: str = Field(
+        ...,
+        description="Human-readable status confirmation",
+        examples=["Tracker state successfully reset"],
+    )
 
 
 class DetectionResponse(BaseModel):

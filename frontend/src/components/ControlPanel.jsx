@@ -7,6 +7,16 @@ export function ControlPanel({
   onConfidenceChange,
   captureIntervalMs,
   onIntervalChange,
+  minMoveDistance,
+  onMinMoveDistanceChange,
+  settleDwellTimeMs,
+  onSettleDwellTimeMsChange,
+  activeMovingCount = 0,
+  movementEventsCount = 0,
+  isGuarded = false,
+  guardedCount = 0,
+  onToggleGuard,
+  missingCount = 0,
   detectionCount,
   inferenceTimeMs,
   roundTripTimeMs,
@@ -49,6 +59,16 @@ export function ControlPanel({
           >
             {isDetecting ? "Pause Detection" : "Resume Detection"}
           </button>
+
+          <button
+            type="button"
+            className={`btn ${isGuarded ? "btn-armed" : "btn-guard"}`}
+            onClick={onToggleGuard}
+            disabled={!isCameraActive}
+            title={isGuarded ? "Disarm guarded scene baseline" : "Lock currently detected items as guarded baseline"}
+          >
+            {isGuarded ? `🔓 Disarm Scene (${guardedCount})` : `🛡️ Guard Scene (${detectionCount})`}
+          </button>
         </div>
 
         <div className="sliders-group">
@@ -83,6 +103,38 @@ export function ControlPanel({
               <option value={500}>500 ms (2 FPS)</option>
             </select>
           </div>
+
+          <div className="slider-control">
+            <div className="slider-label-row">
+              <label htmlFor="min-dist-slider">Min Move Distance</label>
+              <span className="slider-value">{minMoveDistance} px</span>
+            </div>
+            <input
+              id="min-dist-slider"
+              type="range"
+              min="25"
+              max="150"
+              step="5"
+              value={minMoveDistance}
+              onChange={(e) => onMinMoveDistanceChange(Number(e.target.value))}
+            />
+          </div>
+
+          <div className="slider-control">
+            <div className="slider-label-row">
+              <label htmlFor="dwell-slider">Settle Dwell Time</label>
+              <span className="slider-value">{(settleDwellTimeMs / 1000).toFixed(1)}s</span>
+            </div>
+            <input
+              id="dwell-slider"
+              type="range"
+              min="800"
+              max="3000"
+              step="200"
+              value={settleDwellTimeMs}
+              onChange={(e) => onSettleDwellTimeMsChange(Number(e.target.value))}
+            />
+          </div>
         </div>
       </div>
 
@@ -95,7 +147,28 @@ export function ControlPanel({
         </div>
 
         <div className="telemetry-card">
-          <span className="telemetry-label">YOLO Inference Latency</span>
+          <span className="telemetry-label">Items Moving</span>
+          <strong className={`telemetry-value ${activeMovingCount > 0 ? "telemetry-moving" : ""}`}>
+            {activeMovingCount > 0 ? `${activeMovingCount} active` : "0"}
+          </strong>
+        </div>
+
+        <div className="telemetry-card">
+          <span className="telemetry-label">Total Relocations</span>
+          <strong className="telemetry-value telemetry-success">
+            {movementEventsCount}
+          </strong>
+        </div>
+
+        <div className="telemetry-card">
+          <span className="telemetry-label">Missing Items</span>
+          <strong className={`telemetry-value ${missingCount > 0 ? "telemetry-missing" : ""}`}>
+            {missingCount > 0 ? `🚨 ${missingCount}` : "0"}
+          </strong>
+        </div>
+
+        <div className="telemetry-card">
+          <span className="telemetry-label">YOLO Inference</span>
           <strong className="telemetry-value">
             {inferenceTimeMs !== null ? `${inferenceTimeMs.toFixed(1)} ms` : "—"}
           </strong>

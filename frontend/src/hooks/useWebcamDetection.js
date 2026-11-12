@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { detectObjects, fetchClasses, fetchHealth } from "../services/api";
+import { detectObjects, fetchClasses, fetchHealth, resetTrack } from "../services/api";
 
 const INITIAL_CONFIDENCE = Number(
   import.meta.env.VITE_DEFAULT_CONFIDENCE || 0.35
@@ -171,6 +171,7 @@ export function useWebcamDetection() {
     setDetectionCount(0);
     setInferenceTimeMs(null);
     setRoundTripTimeMs(null);
+    resetTrack().catch(() => {});
   }, []);
 
   // Ensure tracks are stopped on unmount
@@ -237,6 +238,7 @@ export function useWebcamDetection() {
       setCameraStatus("active");
       setIsDetecting(true);
       setDetectionStatus("running");
+      resetTrack().catch(() => {});
     } catch (err) {
       if (!mountedRef.current) return;
       setCameraStatus("error");

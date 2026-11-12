@@ -7,6 +7,7 @@ export function Header({
   detectionStatus,
   onRetryHealth,
 }) {
+  
   const getBackendBadge = () => {
     switch (backendStatus) {
       case "ready":

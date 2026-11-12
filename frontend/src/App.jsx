@@ -1,8 +1,11 @@
-import React from "react";
+import React, { useEffect } from "react";
 import { ControlPanel } from "./components/ControlPanel";
 import { DetectionList } from "./components/DetectionList";
 import { Header } from "./components/Header";
+import { MissingAlertBanner } from "./components/MissingAlertBanner";
+import { MovementLog } from "./components/MovementLog";
 import { VideoViewport } from "./components/VideoViewport";
+import { useSceneTracker } from "./hooks/useSceneTracker";
 import { useWebcamDetection } from "./hooks/useWebcamDetection";
 import "./App.css";
 
@@ -35,6 +38,39 @@ export function App() {
     handleVideoMetadataLoaded,
   } = useWebcamDetection();
 
+  const {
+    activeTracksMap,
+    activeMovingCount,
+    movementEvents,
+    missingItems,
+    missingEvents,
+    isGuarded,
+    guardedCount,
+    minMoveDistance,
+    setMinMoveDistance,
+    settleDwellTimeMs,
+    setSettleDwellTimeMs,
+    toggleGuard,
+    dismissMissingItem,
+    clearEvents,
+    resetScene,
+    processFrame,
+  } = useSceneTracker();
+
+  // Run scene tracking once on every completed detection frame
+  useEffect(() => {
+    if (cameraStatus === "active" && isDetecting) {
+      processFrame(detections);
+    }
+  }, [lastUpdatedAt]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Reset scene tracks when camera stops
+  useEffect(() => {
+    if (cameraStatus !== "active") {
+      resetScene();
+    }
+  }, [cameraStatus, resetScene]);
+
   return (
     <div className="app-shell">
       <Header
@@ -57,6 +93,11 @@ export function App() {
         </div>
       )}
 
+      <MissingAlertBanner
+        missingItems={missingItems}
+        onDismiss={dismissMissingItem}
+      />
+
       <main className="dashboard-grid">
         <div className="primary-column">
           <VideoViewport
@@ -66,6 +107,9 @@ export function App() {
             isDetecting={isDetecting}
             detections={detections}
             sourceFrameSize={sourceFrameSize}
+            activeTracksMap={activeTracksMap}
+            missingItems={missingItems}
+            isGuarded={isGuarded}
             onStartCamera={startCamera}
             onMetadataLoaded={handleVideoMetadataLoaded}
           />
@@ -77,6 +121,16 @@ export function App() {
             onConfidenceChange={setConfidence}
             captureIntervalMs={captureIntervalMs}
             onIntervalChange={setCaptureIntervalMs}
+            minMoveDistance={minMoveDistance}
+            onMinMoveDistanceChange={setMinMoveDistance}
+            settleDwellTimeMs={settleDwellTimeMs}
+            onSettleDwellTimeMsChange={setSettleDwellTimeMs}
+            activeMovingCount={activeMovingCount}
+            movementEventsCount={movementEvents.length}
+            isGuarded={isGuarded}
+            guardedCount={guardedCount}
+            onToggleGuard={toggleGuard}
+            missingCount={missingItems.length}
             detectionCount={detectionCount}
             inferenceTimeMs={inferenceTimeMs}
             roundTripTimeMs={roundTripTimeMs}
@@ -88,6 +142,16 @@ export function App() {
         </div>
 
         <div className="secondary-column">
+          <MovementLog
+            events={movementEvents}
+            missingEvents={missingEvents}
+            activeMovingCount={activeMovingCount}
+            missingItemsCount={missingItems.length}
+            onClearEvents={clearEvents}
+            minMoveDistance={minMoveDistance}
+            settleDwellTimeMs={settleDwellTimeMs}
+          />
+
           <DetectionList
             detections={detections}
             detectionCount={detectionCount}

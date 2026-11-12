@@ -114,3 +114,24 @@ export async function detectObjects(imageBlob, confidence = 0.35, signal) {
 
   return response.json();
 }
+
+/**
+ * Reset tracker states and object tracking IDs in the backend.
+ * @param {AbortSignal} [signal]
+ */
+export async function resetTrack(signal) {
+  try {
+    const response = await fetch(`${API_BASE_URL}/track/reset`, {
+      method: "POST",
+      headers: { Accept: "application/json" },
+      signal,
+    });
+    if (response.ok) {
+      return await response.json();
+    }
+  } catch (err) {
+    if (err.name === "AbortError") throw err;
+    // Non-fatal if tracker reset fails
+  }
+  return null;
+}

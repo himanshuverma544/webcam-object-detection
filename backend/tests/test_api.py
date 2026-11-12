@@ -97,12 +97,23 @@ def test_detect_valid_jpeg_schema_and_coordinates(
     assert first["class_id"] == 0
     assert first["confidence"] == 0.91
     assert first["bbox"] == [50.0, 40.0, 280.0, 420.0]
+    assert first["track_id"] == 1
 
     second = data["detections"][1]
     assert second["label"] == "laptop"
     assert second["class_id"] == 63
     assert second["confidence"] == 0.48
     assert second["bbox"] == [310.0, 200.0, 520.0, 390.0]
+    assert second["track_id"] == 2
+
+
+def test_track_reset_endpoint(client: TestClient) -> None:
+    """POST /track/reset resets tracker internal state and returns status ok."""
+    response = client.post("/track/reset")
+    assert response.status_code == 200
+    data = response.json()
+    assert data["status"] == "ok"
+    assert "reset" in data["message"].lower()
 
 
 def test_detect_supports_png_and_webp(
