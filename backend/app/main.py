@@ -72,12 +72,13 @@ def create_app() -> FastAPI:
         lifespan=lifespan,
     )
 
-    # Restrict CORS to configured local Vite frontend origins
+    # Configure CORS for allowed origins (supports wildcard or specific domains)
+    allow_all_origins = "*" in settings.cors_origin_list
     application.add_middleware(
         CORSMiddleware,
-        allow_origins=settings.cors_origin_list,
-        allow_credentials=True,
-        allow_methods=["GET", "POST", "OPTIONS"],
+        allow_origins=["*"] if allow_all_origins else settings.cors_origin_list,
+        allow_credentials=not allow_all_origins,
+        allow_methods=["*"],
         allow_headers=["*"],
     )
 
