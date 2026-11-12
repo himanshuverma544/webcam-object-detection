@@ -1,3 +1,13 @@
+---
+title: Webcam Object Detection
+emoji: 🎥
+colorFrom: indigo
+colorTo: purple
+sdk: docker
+app_port: 7860
+pinned: false
+---
+
 # Real-Time Webcam Object Detection (YOLO11n + FastAPI + React)
 
 A full-stack real-time computer vision application that captures live video frames from your browser webcam, runs local object detection inference using an **Ultralytics YOLO11n (`yolo11n.pt`)** model in a **Python FastAPI** backend, draws synchronized bounding boxes over the live video stream, and displays real-time telemetry and detected object lists in a responsive **React + Vite** dashboard.
