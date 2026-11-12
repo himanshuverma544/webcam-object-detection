@@ -26,9 +26,9 @@ class Settings(BaseSettings):
     port: int = Field(default=8000, alias="PORT")
     log_level: str = Field(default="INFO", alias="LOG_LEVEL")
 
-    # Comma-separated list of allowed frontend origins
+    # Comma-separated list of allowed frontend origins (supports '*' or specific domains)
     cors_origins: str = Field(
-        default="http://localhost:5173,http://127.0.0.1:5173,http://localhost:4173,http://127.0.0.1:4173",
+        default="*,https://webcam-object-detection.vercel.app,http://localhost:5173,http://127.0.0.1:5173",
         alias="CORS_ORIGINS",
     )
 

@@ -1,5 +1,18 @@
 const rawBaseUrl = import.meta.env.VITE_API_BASE_URL || "http://127.0.0.1:8000";
-export const API_BASE_URL = rawBaseUrl.replace(/\/+$/, "");
+
+// Ensure no trailing slashes and auto-upgrade http to https if loaded over HTTPS (prevents Mixed Content errors)
+let normalizedUrl = (rawBaseUrl || "").trim().replace(/\/+$/, "");
+if (
+  typeof window !== "undefined" &&
+  window.location.protocol === "https:" &&
+  normalizedUrl.startsWith("http://") &&
+  !normalizedUrl.includes("localhost") &&
+  !normalizedUrl.includes("127.0.0.1")
+) {
+  normalizedUrl = normalizedUrl.replace(/^http:\/\//, "https://");
+}
+
+export const API_BASE_URL = normalizedUrl;
 
 export class ApiError extends Error {
   constructor(message, status = 0) {
