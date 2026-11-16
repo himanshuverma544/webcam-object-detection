@@ -209,7 +209,7 @@ export function VideoViewport({
           if (track.distance > 0) {
             const midX = (startX + endX) / 2;
             const midY = (startY + endY) / 2;
-            const distText = track.isFlashing ? `Moved ${track.distance}px ✓` : `${track.distance}px ➔`;
+            const distText = track.isFlashing ? `Moved ${track.distance}px` : `${track.distance}px`;
             ctx.font = "600 11px Inter, -apple-system, BlinkMacSystemFont, sans-serif";
             const dm = ctx.measureText(distText);
             const badgeW = dm.width + 10;
@@ -285,8 +285,8 @@ export function VideoViewport({
         : det.track_id !== undefined && det.track_id !== null
         ? `#${det.track_id} `
         : "";
-      const guardPrefix = isGuarded ? "🛡️ " : "";
-      const statusText = isFlashing ? " [Moved ✓]" : isMoving ? " [Moving ➔]" : "";
+      const guardPrefix = isGuarded ? "[GUARD] " : "";
+      const statusText = isFlashing ? " [Moved]" : isMoving ? " [Moving]" : "";
       const labelText = `${guardPrefix}${trackIdText}${det.label} ${confidencePct}${statusText}`;
 
       // Semi-transparent fill
@@ -347,7 +347,7 @@ export function VideoViewport({
         ctx.fillRect(gx, gy, gw, gh);
 
         // Missing item alert pill
-        const missingText = `⚠️ MISSING: ${item.label.toUpperCase()}`;
+        const missingText = `MISSING: ${item.label.toUpperCase()}`;
         ctx.font = "700 12px Inter, -apple-system, BlinkMacSystemFont, sans-serif";
         const mm = ctx.measureText(missingText);
         const pillW = mm.width + 16;

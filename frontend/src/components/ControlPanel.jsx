@@ -21,6 +21,8 @@ export function ControlPanel({
   inferenceTimeMs,
   roundTripTimeMs,
   videoDimensions,
+  hasMetrics = false,
+  onShowMetrics,
   onStartCamera,
   onStopCamera,
   onToggleDetection,
@@ -33,14 +35,26 @@ export function ControlPanel({
       <div className="controls-row">
         <div className="button-group">
           {!isCameraActive ? (
-            <button
-              type="button"
-              className="btn btn-primary"
-              onClick={onStartCamera}
-              disabled={isCameraStarting}
-            >
-              {isCameraStarting ? "Starting Camera..." : "Start Camera"}
-            </button>
+            <>
+              <button
+                type="button"
+                className="btn btn-primary"
+                onClick={onStartCamera}
+                disabled={isCameraStarting}
+              >
+                {isCameraStarting ? "Starting Camera..." : "Start Camera"}
+              </button>
+              {hasMetrics && (
+                <button
+                  type="button"
+                  className="btn btn-metrics"
+                  onClick={onShowMetrics}
+                  title="View detailed summary and metrics of the last session"
+                >
+                  Show Metrics
+                </button>
+              )}
+            </>
           ) : (
             <button
               type="button"
@@ -67,7 +81,7 @@ export function ControlPanel({
             disabled={!isCameraActive}
             title={isGuarded ? "Disarm guarded scene baseline" : "Lock currently detected items as guarded baseline"}
           >
-            {isGuarded ? `🔓 Disarm Scene (${guardedCount})` : `🛡️ Guard Scene (${detectionCount})`}
+            {isGuarded ? `Disarm Scene (${guardedCount})` : `Guard Scene (${detectionCount})`}
           </button>
         </div>
 
@@ -163,7 +177,7 @@ export function ControlPanel({
         <div className="telemetry-card">
           <span className="telemetry-label">Missing Items</span>
           <strong className={`telemetry-value ${missingCount > 0 ? "telemetry-missing" : ""}`}>
-            {missingCount > 0 ? `🚨 ${missingCount}` : "0"}
+            {missingCount}
           </strong>
         </div>
 

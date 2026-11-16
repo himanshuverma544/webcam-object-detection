@@ -1,11 +1,13 @@
-import React, { useEffect } from "react";
+import React, { useCallback, useEffect, useState } from "react";
 import { ControlPanel } from "./components/ControlPanel";
 import { DetectionList } from "./components/DetectionList";
 import { Header } from "./components/Header";
+import { MetricsModal } from "./components/MetricsModal";
 import { MissingAlertBanner } from "./components/MissingAlertBanner";
 import { MovementLog } from "./components/MovementLog";
 import { VideoViewport } from "./components/VideoViewport";
 import { useSceneTracker } from "./hooks/useSceneTracker";
+import { useSessionMetrics } from "./hooks/useSessionMetrics";
 import { useWebcamDetection } from "./hooks/useWebcamDetection";
 import { API_BASE_URL } from "./services/api";
 import "./App.css";
@@ -58,6 +60,35 @@ export function App() {
     processFrame,
   } = useSceneTracker();
 
+  const [isMetricsModalOpen, setIsMetricsModalOpen] = useState(false);
+
+  // Session metrics accumulator
+  const {
+    completedMetrics,
+    hasMetrics,
+    snapshotSession,
+  } = useSessionMetrics({
+    cameraStatus,
+    isDetecting,
+    isGuarded,
+    detections,
+    detectionCount,
+    inferenceTimeMs,
+    roundTripTimeMs,
+    confidence,
+    missingEvents,
+    missingItems,
+    movementEvents,
+    activeTracksMap,
+    lastUpdatedAt,
+  });
+
+  // Intercept camera stop to freeze session metrics before scene resets
+  const handleStopCamera = useCallback(() => {
+    snapshotSession();
+    stopCamera();
+  }, [snapshotSession, stopCamera]);
+
   // Run scene tracking once on every completed detection frame
   useEffect(() => {
     if (cameraStatus === "active" && isDetecting) {
@@ -95,14 +126,14 @@ export function App() {
           </div>
           {API_BASE_URL.includes("127.0.0.1") || API_BASE_URL.includes("localhost") ? (
             <p style={{ margin: "6px 0 0", fontSize: "0.82rem", lineHeight: "1.4" }}>
-              💡 <strong>How to fix:</strong> Your deployed frontend is still configured to connect to <code>localhost:8000</code>.
+              <strong>Note - How to fix:</strong> Your deployed frontend is still configured to connect to <code>localhost:8000</code>.
               In your Render Frontend dashboard, go to <strong>Environment</strong>, add{" "}
               <code>VITE_API_BASE_URL = https://&lt;your-backend&gt;.onrender.com</code>, then click{" "}
-              <strong>Manual Deploy → Clear build cache &amp; deploy</strong>.
+              <strong>Manual Deploy -&gt; Clear build cache &amp; deploy</strong>.
             </p>
           ) : (
             <p style={{ margin: "6px 0 0", fontSize: "0.82rem", lineHeight: "1.4" }}>
-              💡 If using Render Free tier, the backend spins down after 15 minutes of inactivity and may take 30–60 seconds to wake up.
+              Note: If using Render Free tier, the backend spins down after 15 minutes of inactivity and may take 30–60 seconds to wake up.
             </p>
           )}
         </div>
@@ -150,8 +181,10 @@ export function App() {
             inferenceTimeMs={inferenceTimeMs}
             roundTripTimeMs={roundTripTimeMs}
             videoDimensions={videoDimensions}
+            hasMetrics={hasMetrics}
+            onShowMetrics={() => setIsMetricsModalOpen(true)}
             onStartCamera={startCamera}
-            onStopCamera={stopCamera}
+            onStopCamera={handleStopCamera}
             onToggleDetection={toggleDetection}
           />
         </div>
@@ -179,6 +212,12 @@ export function App() {
           />
         </div>
       </main>
+
+      <MetricsModal
+        isOpen={isMetricsModalOpen}
+        onClose={() => setIsMetricsModalOpen(false)}
+        metrics={completedMetrics}
+      />
     </div>
   );
 }

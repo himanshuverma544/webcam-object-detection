@@ -15,7 +15,7 @@ export function MissingAlertBanner({ missingItems = [], onDismiss }) {
     >
       <div className="missing-alert-header">
         <div className="alert-title-wrap">
-          <span className="alert-siren-icon">{hasGuardedBreach ? "🚨" : "⚠️"}</span>
+          <span className="alert-siren-icon">[{hasGuardedBreach ? "BREACH" : "ALERT"}]</span>
           <div>
             <h4 className="alert-heading">
               {hasGuardedBreach
@@ -33,7 +33,7 @@ export function MissingAlertBanner({ missingItems = [], onDismiss }) {
         {missingItems.map((item) => (
           <div key={item.id} className="missing-item-chip">
             <div className="missing-chip-info">
-              {item.isGuarded && <span className="guarded-mini-badge">🛡️ Armed</span>}
+              {item.isGuarded && <span className="guarded-mini-badge">Armed</span>}
               <strong className="missing-chip-name">{item.label}</strong>
               <span className="missing-chip-time">
                 Missing since{" "}
@@ -52,7 +52,7 @@ export function MissingAlertBanner({ missingItems = [], onDismiss }) {
               onClick={() => onDismiss(item.id)}
               title="Acknowledge and dismiss alert"
             >
-              Dismiss ✕
+              Dismiss
             </button>
           </div>
         ))}

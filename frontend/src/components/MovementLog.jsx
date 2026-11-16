@@ -129,7 +129,7 @@ export function MovementLog({
                     <div className="movement-event-top">
                       <div className="movement-item-badge">
                         <span className="event-type-pill missing-pill">
-                          {event.isGuarded ? "🛡️ GUARD BREACH" : "⚠️ MISSING"}
+                          {event.isGuarded ? "GUARD BREACH" : "MISSING"}
                         </span>
                         <strong className="movement-label">{event.label}</strong>
                       </div>
@@ -154,7 +154,7 @@ export function MovementLog({
                     <div className="movement-event-top">
                       <div className="movement-item-badge">
                         <span className="event-type-pill restored-pill">
-                          ✅ RESTORED
+                          RESTORED
                         </span>
                         <strong className="movement-label">{event.label}</strong>
                       </div>
@@ -196,7 +196,7 @@ export function MovementLog({
 
                   <div className="movement-metrics-row">
                     <span className="displacement-tag">
-                      <span className="metric-arrow">➔</span>
+                      <span className="metric-arrow">&rarr;</span>
                       <strong>{event.distance} px</strong> moved
                     </span>
                     <span className="duration-tag">{event.durationSec}s travel</span>
@@ -206,7 +206,7 @@ export function MovementLog({
                     <span className="coord-point origin-point" title="Original position">
                       From ({fromX}, {fromY})
                     </span>
-                    <span className="coord-sep">➔</span>
+                    <span className="coord-sep">&rarr;</span>
                     <span className="coord-point dest-point" title="New settled position">
                       To ({toX}, {toY})
                     </span>

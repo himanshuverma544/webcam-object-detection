@@ -19,11 +19,14 @@ from app.core.config import Settings, get_settings
 from app.schemas.detection import (
     ClassesResponse,
     DetectionResponse,
+    EmailMetricsRequest,
+    EmailMetricsResponse,
     ErrorResponse,
     HealthResponse,
     ResetTrackResponse,
 )
 from app.services.detector import YOLOObjectDetector
+from app.services.email_service import send_metrics_email
 
 logger = logging.getLogger(__name__)
 
@@ -235,4 +238,48 @@ async def detect_objects(
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="An unexpected error occurred during object detection.",
+        ) from exc
+
+
+@router.post(
+    "/metrics/email",
+    response_model=EmailMetricsResponse,
+    summary="Email structured session metrics report",
+)
+async def email_metrics(
+    payload: EmailMetricsRequest,
+    settings: Settings = Depends(get_settings),
+) -> EmailMetricsResponse:
+    """Send structured session metrics report via email."""
+    recipient = (
+        (payload.recipient_email or "").strip()
+        or (settings.default_recipient_email or "").strip()
+    )
+    if not recipient:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Recipient email address is required. Please specify it in the request or set DEFAULT_RECIPIENT_EMAIL in backend/.env.",
+        )
+
+    try:
+        send_metrics_email(
+            recipient=recipient,
+            metrics=payload.metrics,
+            settings=settings,
+        )
+        return EmailMetricsResponse(
+            status="sent",
+            message=f"Metrics report successfully sent to {recipient}",
+            recipient=recipient,
+        )
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(exc),
+        ) from exc
+    except Exception as exc:
+        logger.exception("Failed to send metrics email.")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to dispatch email: {exc}",
         ) from exc

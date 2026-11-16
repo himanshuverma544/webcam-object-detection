@@ -228,3 +228,208 @@ def test_detect_rejects_oversized_upload(mock_detector: YOLOObjectDetector) -> N
         assert res.status_code == 413
         assert "exceeds maximum size limit" in res.json()["detail"].lower()
 
+
+def test_email_metrics_unconfigured_smtp(client: TestClient) -> None:
+    """POST /metrics/email returns 400 when no email service credentials are configured."""
+    from app.core.config import Settings, get_settings
+
+    mock_settings = Settings(
+        RESEND_API_KEY=None,
+        SMTP_USER=None,
+        SMTP_PASSWORD=None,
+    )
+    client.app.dependency_overrides[get_settings] = lambda: mock_settings
+
+    res = client.post(
+        "/metrics/email",
+        json={
+            "recipient_email": "test-user@example.com",
+            "metrics": {
+                "timestamp": "2026-11-14 20:20:00",
+                "durationFormatted": "5m 20s",
+                "frameCount": 240,
+            },
+        },
+    )
+    client.app.dependency_overrides.clear()
+    assert res.status_code == 400
+    assert "not configured" in res.json()["detail"]
+
+
+def test_email_metrics_success_with_resend_api(
+    client: TestClient, monkeypatch
+) -> None:
+    """POST /metrics/email succeeds when RESEND_API_KEY is configured and Resend API responds 200."""
+    from unittest.mock import MagicMock
+    import httpx
+    from app.core.config import Settings, get_settings
+
+    mock_settings = Settings(
+        RESEND_API_KEY="re_test_valid_key_123",
+        RESEND_FROM_EMAIL="Webcam Detection <onboarding@resend.dev>",
+    )
+    client.app.dependency_overrides[get_settings] = lambda: mock_settings
+
+    mock_response = httpx.Response(
+        status_code=200,
+        json={"id": "email_resend_12345"},
+        request=httpx.Request("POST", "https://api.resend.com/emails"),
+    )
+    mock_client_instance = MagicMock()
+    mock_client_instance.__enter__.return_value = mock_client_instance
+    mock_client_instance.post.return_value = mock_response
+
+    monkeypatch.setattr(
+        "app.services.email_service.httpx.Client",
+        lambda *a, **kw: mock_client_instance,
+    )
+
+    res = client.post(
+        "/metrics/email",
+        json={
+            "recipient_email": "test-user@example.com",
+            "metrics": {
+                "timestamp": "2026-11-14 20:20:00",
+                "durationFormatted": "5m 20s",
+                "frameCount": 240,
+                "securityStatus": "CLEAN",
+                "topClasses": [{"label": "person", "percent": 100, "count": 240}],
+            },
+        },
+    )
+    client.app.dependency_overrides.clear()
+    assert res.status_code == 200
+    data = res.json()
+    assert data["status"] == "sent"
+    assert data["recipient"] == "test-user@example.com"
+    mock_client_instance.post.assert_called_once()
+
+
+def test_email_metrics_resend_api_error_handling(
+    client: TestClient, monkeypatch
+) -> None:
+    """POST /metrics/email surfaces clear error message when Resend API rejects request."""
+    from unittest.mock import MagicMock
+    import httpx
+    from app.core.config import Settings, get_settings
+
+    mock_settings = Settings(
+        RESEND_API_KEY="re_invalid_key",
+    )
+    client.app.dependency_overrides[get_settings] = lambda: mock_settings
+
+    mock_response = httpx.Response(
+        status_code=403,
+        json={"message": "Invalid API Key"},
+        request=httpx.Request("POST", "https://api.resend.com/emails"),
+    )
+    mock_client_instance = MagicMock()
+    mock_client_instance.__enter__.return_value = mock_client_instance
+    mock_client_instance.post.return_value = mock_response
+
+    monkeypatch.setattr(
+        "app.services.email_service.httpx.Client",
+        lambda *a, **kw: mock_client_instance,
+    )
+
+    res = client.post(
+        "/metrics/email",
+        json={
+            "recipient_email": "test-user@example.com",
+            "metrics": {
+                "timestamp": "2026-11-14 20:20:00",
+                "durationFormatted": "5m 20s",
+                "frameCount": 240,
+            },
+        },
+    )
+    client.app.dependency_overrides.clear()
+    assert res.status_code == 400
+    assert "Invalid API Key" in res.json()["detail"]
+
+
+def test_email_metrics_success_with_mocked_smtp(
+    client: TestClient, monkeypatch
+) -> None:
+    """POST /metrics/email succeeds with SMTP fallback when RESEND_API_KEY is not set."""
+    from unittest.mock import MagicMock
+    from app.core.config import Settings, get_settings
+
+    mock_settings = Settings(
+        RESEND_API_KEY=None,
+        SMTP_USER="test@example.com",
+        SMTP_PASSWORD="testpassword",
+        SMTP_HOST="smtp.example.com",
+    )
+    client.app.dependency_overrides[get_settings] = lambda: mock_settings
+
+    mock_smtp_instance = MagicMock()
+    monkeypatch.setattr("smtplib.SMTP", lambda *a, **kw: mock_smtp_instance)
+
+    res = client.post(
+        "/metrics/email",
+        json={
+            "recipient_email": "test-user@example.com",
+            "metrics": {
+                "timestamp": "2026-11-14 20:20:00",
+                "durationFormatted": "5m 20s",
+                "frameCount": 240,
+                "securityStatus": "CLEAN",
+                "topClasses": [{"label": "person", "percent": 100, "count": 240}],
+            },
+        },
+    )
+    client.app.dependency_overrides.clear()
+    assert res.status_code == 200
+    data = res.json()
+    assert data["status"] == "sent"
+    assert data["recipient"] == "test-user@example.com"
+    mock_smtp_instance.sendmail.assert_called_once()
+
+
+def test_email_metrics_uses_default_recipient_from_config(
+    client: TestClient, monkeypatch
+) -> None:
+    """POST /metrics/email falls back to DEFAULT_RECIPIENT_EMAIL if omitted from payload."""
+    from unittest.mock import MagicMock
+    import httpx
+    from app.core.config import Settings, get_settings
+
+    mock_settings = Settings(
+        RESEND_API_KEY="re_test_valid_key",
+        DEFAULT_RECIPIENT_EMAIL="configured-env@example.com",
+    )
+    client.app.dependency_overrides[get_settings] = lambda: mock_settings
+
+    mock_response = httpx.Response(
+        status_code=200,
+        json={"id": "email_resend_999"},
+        request=httpx.Request("POST", "https://api.resend.com/emails"),
+    )
+    mock_client_instance = MagicMock()
+    mock_client_instance.__enter__.return_value = mock_client_instance
+    mock_client_instance.post.return_value = mock_response
+
+    monkeypatch.setattr(
+        "app.services.email_service.httpx.Client",
+        lambda *a, **kw: mock_client_instance,
+    )
+
+    res = client.post(
+        "/metrics/email",
+        json={
+            "metrics": {
+                "timestamp": "2026-11-16 11:30:00",
+                "durationFormatted": "3m 15s",
+                "frameCount": 180,
+            },
+        },
+    )
+    client.app.dependency_overrides.clear()
+    assert res.status_code == 200
+    data = res.json()
+    assert data["status"] == "sent"
+    assert data["recipient"] == "configured-env@example.com"
+
+
+

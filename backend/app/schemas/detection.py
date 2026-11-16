@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Dict, List, Optional
+from typing import Any, Dict, List, Optional
 
 from pydantic import BaseModel, Field
 
@@ -139,3 +139,37 @@ class ErrorResponse(BaseModel):
     """Standard error response payload."""
 
     detail: str = Field(..., description="Human-readable error description")
+
+
+class EmailMetricsRequest(BaseModel):
+    """Request payload for sending session metrics report via email."""
+
+    recipient_email: Optional[str] = Field(
+        default=None,
+        description="Target email address to receive metrics report (falls back to DEFAULT_RECIPIENT_EMAIL if omitted)",
+        examples=["user@example.com"],
+    )
+    metrics: Dict[str, Any] = Field(
+        ...,
+        description="Complete structured session metrics data payload",
+    )
+
+
+class EmailMetricsResponse(BaseModel):
+    """Response payload after dispatching metrics report via email."""
+
+    status: str = Field(
+        ...,
+        description="Status flag indicating delivery outcome ('sent' or 'ok')",
+        examples=["sent"],
+    )
+    message: str = Field(
+        ...,
+        description="Human-readable delivery confirmation message",
+        examples=["Metrics report email sent successfully"],
+    )
+    recipient: str = Field(
+        ...,
+        description="Destination email address where report was dispatched",
+        examples=["user@example.com"],
+    )

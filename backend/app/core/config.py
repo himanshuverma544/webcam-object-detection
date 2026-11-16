@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from functools import lru_cache
-from typing import List, Set
+from typing import List, Optional, Set
 
 from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -51,6 +51,25 @@ class Settings(BaseSettings):
         ge=1024,
         alias="MAX_UPLOAD_SIZE_BYTES",
     )
+
+    # Resend Email API Settings
+    resend_api_key: Optional[str] = Field(default=None, alias="RESEND_API_KEY")
+    resend_from_email: str = Field(
+        default="Webcam Detection <onboarding@resend.dev>",
+        alias="RESEND_FROM_EMAIL",
+    )
+    default_recipient_email: Optional[str] = Field(
+        default=None,
+        alias="DEFAULT_RECIPIENT_EMAIL",
+    )
+
+    # SMTP / Fallback Email Settings
+    smtp_host: str = Field(default="smtp.gmail.com", alias="SMTP_HOST")
+    smtp_port: int = Field(default=587, alias="SMTP_PORT")
+    smtp_user: Optional[str] = Field(default=None, alias="SMTP_USER")
+    smtp_password: Optional[str] = Field(default=None, alias="SMTP_PASSWORD")
+    smtp_from_email: Optional[str] = Field(default=None, alias="SMTP_FROM_EMAIL")
+    smtp_tls: bool = Field(default=True, alias="SMTP_TLS")
 
     @property
     def cors_origin_list(self) -> List[str]:

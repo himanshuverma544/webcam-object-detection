@@ -148,3 +148,48 @@ export async function resetTrack(signal) {
   }
   return null;
 }
+
+const defaultEnvRecipient = (import.meta.env.VITE_DEFAULT_RECIPIENT_EMAIL || "").trim();
+
+/**
+ * Dispatch session metrics report via email to specified recipient.
+ * @param {Object} metrics - Structured session metrics object
+ * @param {string} [recipientEmail] - Destination email (falls back to VITE_DEFAULT_RECIPIENT_EMAIL if omitted)
+ * @param {AbortSignal} [signal]
+ */
+export async function sendMetricsEmail(
+  metrics,
+  recipientEmail = defaultEnvRecipient,
+  signal
+) {
+  let response;
+  try {
+    const payload = { metrics };
+    if (recipientEmail && recipientEmail.trim()) {
+      payload.recipient_email = recipientEmail.trim();
+    }
+
+    response = await fetch(`${API_BASE_URL}/metrics/email`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Accept: "application/json",
+      },
+      body: JSON.stringify(payload),
+      signal,
+    });
+  } catch (err) {
+    if (err.name === "AbortError") throw err;
+    throw new ApiError(
+      `Cannot reach backend at ${API_BASE_URL}. Ensure the server is running.`,
+      0
+    );
+  }
+
+  if (!response.ok) {
+    const detail = await parseErrorMessage(response);
+    throw new ApiError(detail, response.status);
+  }
+
+  return response.json();
+}
