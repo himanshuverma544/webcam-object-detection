@@ -94,23 +94,35 @@ export async function fetchClasses(signal) {
  * Upload an image frame Blob to POST /detect and return structured detections.
  * @param {Blob} imageBlob - Encoded JPEG/PNG/WebP image frame
  * @param {number} confidence - Confidence threshold between 0.01 and 1.0
+ * @param {string[]|null|AbortSignal} [classes] - Optional array of selected COCO class names or IDs
  * @param {AbortSignal} [signal]
  */
-export async function detectObjects(imageBlob, confidence = 0.35, signal) {
+export async function detectObjects(imageBlob, confidence = 0.35, classes = null, signal) {
+  let activeClasses = classes;
+  let activeSignal = signal;
+  if (classes && (classes instanceof AbortSignal || typeof classes.aborted === "boolean")) {
+    activeSignal = classes;
+    activeClasses = null;
+  }
+
   const formData = new FormData();
   formData.append("file", imageBlob, "frame.jpg");
 
   const clampedConfidence = Math.min(1.0, Math.max(0.01, Number(confidence) || 0.35));
-  const url = `${API_BASE_URL}/detect?confidence=${encodeURIComponent(
+  let url = `${API_BASE_URL}/detect?confidence=${encodeURIComponent(
     clampedConfidence.toFixed(2)
   )}`;
+
+  if (Array.isArray(activeClasses) && activeClasses.length > 0) {
+    url += `&classes=${encodeURIComponent(activeClasses.join(","))}`;
+  }
 
   let response;
   try {
     response = await fetch(url, {
       method: "POST",
       body: formData,
-      signal,
+      signal: activeSignal,
     });
   } catch (err) {
     if (err.name === "AbortError") throw err;

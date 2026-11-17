@@ -4,7 +4,6 @@ import { DetectionList } from "./components/DetectionList";
 import { Header } from "./components/Header";
 import { MetricsModal } from "./components/MetricsModal";
 import { MissingAlertBanner } from "./components/MissingAlertBanner";
-import { MovementLog } from "./components/MovementLog";
 import { VideoViewport } from "./components/VideoViewport";
 import { useSceneTracker } from "./hooks/useSceneTracker";
 import { useSessionMetrics } from "./hooks/useSessionMetrics";
@@ -34,6 +33,8 @@ export function App() {
     backendStatus,
     healthInfo,
     supportedClasses,
+    selectedClasses,
+    setSelectedClasses,
     startCamera,
     stopCamera,
     toggleDetection,
@@ -190,25 +191,11 @@ export function App() {
         </div>
 
         <div className="secondary-column">
-          <MovementLog
-            events={movementEvents}
-            missingEvents={missingEvents}
-            activeMovingCount={activeMovingCount}
-            missingItemsCount={missingItems.length}
-            onClearEvents={clearEvents}
-            minMoveDistance={minMoveDistance}
-            settleDwellTimeMs={settleDwellTimeMs}
-          />
-
           <DetectionList
-            detections={detections}
-            detectionCount={detectionCount}
-            inferenceTimeMs={inferenceTimeMs}
-            sourceFrameSize={sourceFrameSize}
-            cameraStatus={cameraStatus}
-            isDetecting={isDetecting}
             supportedClasses={supportedClasses}
-            lastUpdatedAt={lastUpdatedAt}
+            selectedClasses={selectedClasses}
+            onSelectClasses={setSelectedClasses}
+            detectionCount={detectionCount}
           />
         </div>
       </main>

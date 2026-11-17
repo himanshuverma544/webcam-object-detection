@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import logging
 import time
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Union
 
 import cv2
 import numpy as np
@@ -254,6 +254,30 @@ class YOLOObjectDetector:
         """Return mapping of supported class IDs to class labels."""
         return dict(self.classes)
 
+    def resolve_class_ids(
+        self, class_inputs: Optional[List[Union[str, int]]]
+    ) -> Optional[List[int]]:
+        """Resolve a list of class names or IDs into valid integer class IDs."""
+        if not class_inputs:
+            return None
+        resolved: List[int] = []
+        name_to_id = {name.lower(): cid for cid, name in self.classes.items()}
+        for item in class_inputs:
+            if isinstance(item, int):
+                if item in self.classes:
+                    resolved.append(item)
+            elif isinstance(item, str):
+                cleaned = item.strip().lower()
+                if not cleaned:
+                    continue
+                if cleaned.isdigit():
+                    cid = int(cleaned)
+                    if cid in self.classes:
+                        resolved.append(cid)
+                elif cleaned in name_to_id:
+                    resolved.append(name_to_id[cleaned])
+        return sorted(list(set(resolved))) if resolved else None
+
     @staticmethod
     def decode_image(image_bytes: bytes) -> np.ndarray:
         """Safely decode raw image bytes into a BGR OpenCV numpy array."""
@@ -278,8 +302,9 @@ class YOLOObjectDetector:
         self,
         image_bytes: bytes,
         confidence: Optional[float] = None,
+        classes: Optional[List[int]] = None,
     ) -> DetectionResponse:
-        """Decode image frame and run YOLO object detection."""
+        """Decode image frame and run YOLO object detection, optionally filtered by class IDs."""
         if not self.is_ready or self.model is None:
             raise RuntimeError("Object detection model is not loaded yet.")
 
@@ -291,35 +316,54 @@ class YOLOObjectDetector:
         frame = self.decode_image(image_bytes)
         height, width = int(frame.shape[0]), int(frame.shape[1])
 
+        # If empty classes list was explicitly provided (e.g. no valid matched classes), return zero detections immediately
+        if classes is not None and len(classes) == 0:
+            return DetectionResponse(
+                image_width=width,
+                image_height=height,
+                image_dimensions=ImageDimensions(width=width, height=height),
+                inference_time_ms=0.0,
+                confidence_threshold=round(conf_threshold, 4),
+                detection_count=0,
+                detections=[],
+            )
+
         # Run YOLO inference and time execution
         start_time = time.perf_counter()
         results = None
+
+        track_kwargs: Dict[str, Any] = {
+            "source": frame,
+            "conf": conf_threshold,
+            "iou": self.iou_threshold,
+            "max_det": self.max_detections,
+            "device": self.device,
+            "persist": True,
+            "tracker": "bytetrack.yaml",
+            "verbose": False,
+        }
+        predict_kwargs: Dict[str, Any] = {
+            "source": frame,
+            "conf": conf_threshold,
+            "iou": self.iou_threshold,
+            "max_det": self.max_detections,
+            "device": self.device,
+            "verbose": False,
+        }
+        if classes is not None:
+            track_kwargs["classes"] = classes
+            predict_kwargs["classes"] = classes
+
         try:
             if hasattr(self.model, "track"):
                 try:
-                    results = self.model.track(
-                        source=frame,
-                        conf=conf_threshold,
-                        iou=self.iou_threshold,
-                        max_det=self.max_detections,
-                        device=self.device,
-                        persist=True,
-                        tracker="bytetrack.yaml",
-                        verbose=False,
-                    )
+                    results = self.model.track(**track_kwargs)
                 except Exception as track_exc:
                     logger.warning("YOLO track call failed (%s). Falling back to predict.", track_exc)
                     results = None
 
             if results is None:
-                results = self.model.predict(
-                    source=frame,
-                    conf=conf_threshold,
-                    iou=self.iou_threshold,
-                    max_det=self.max_detections,
-                    device=self.device,
-                    verbose=False,
-                )
+                results = self.model.predict(**predict_kwargs)
         except Exception as exc:
             logger.error("YOLO inference error: %s", exc)
             raise RuntimeError("Model inference failed on the provided image.") from exc
@@ -365,6 +409,9 @@ class YOLOObjectDetector:
                         continue
 
                     class_id = int(cls_idx)
+                    if classes is not None and class_id not in classes:
+                        continue
+
                     label = self.classes.get(class_id, f"class_{class_id}")
 
                     x1 = round(max(0.0, min(float(width), float(coords[0]))), 2)

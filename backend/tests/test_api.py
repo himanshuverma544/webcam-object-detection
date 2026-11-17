@@ -432,4 +432,66 @@ def test_email_metrics_uses_default_recipient_from_config(
     assert data["recipient"] == "configured-env@example.com"
 
 
+def test_detect_with_class_filter_by_name(
+    client: TestClient, sample_jpeg_bytes: bytes
+) -> None:
+    """POST /detect with classes=person returns only person detection, filtering out laptop."""
+    response = client.post(
+        "/detect?confidence=0.35&classes=person",
+        files={"file": ("webcam.jpg", sample_jpeg_bytes, "image/jpeg")},
+    )
+    assert response.status_code == 200
+    data = response.json()
+    assert data["detection_count"] == 1
+    assert len(data["detections"]) == 1
+    assert data["detections"][0]["label"] == "person"
+    assert data["detections"][0]["class_id"] == 0
+
+
+def test_detect_with_class_filter_by_id(
+    client: TestClient, sample_jpeg_bytes: bytes
+) -> None:
+    """POST /detect with classes=63 returns only laptop detection (class_id=63)."""
+    response = client.post(
+        "/detect?confidence=0.35&classes=63",
+        files={"file": ("webcam.jpg", sample_jpeg_bytes, "image/jpeg")},
+    )
+    assert response.status_code == 200
+    data = response.json()
+    assert data["detection_count"] == 1
+    assert len(data["detections"]) == 1
+    assert data["detections"][0]["label"] == "laptop"
+    assert data["detections"][0]["class_id"] == 63
+
+
+def test_detect_with_class_filter_multiple(
+    client: TestClient, sample_jpeg_bytes: bytes
+) -> None:
+    """POST /detect with classes=person,laptop returns both matching objects."""
+    response = client.post(
+        "/detect?confidence=0.35&classes=person,laptop",
+        files={"file": ("webcam.jpg", sample_jpeg_bytes, "image/jpeg")},
+    )
+    assert response.status_code == 200
+    data = response.json()
+    assert data["detection_count"] == 2
+    labels = {d["label"] for d in data["detections"]}
+    assert labels == {"person", "laptop"}
+
+
+def test_detect_with_class_filter_no_match(
+    client: TestClient, sample_jpeg_bytes: bytes
+) -> None:
+    """POST /detect with classes=bottle returns 0 detections when no bottle exists in frame."""
+    response = client.post(
+        "/detect?confidence=0.35&classes=bottle",
+        files={"file": ("webcam.jpg", sample_jpeg_bytes, "image/jpeg")},
+    )
+    assert response.status_code == 200
+    data = response.json()
+    assert data["detection_count"] == 0
+    assert len(data["detections"]) == 0
+
+
+
 

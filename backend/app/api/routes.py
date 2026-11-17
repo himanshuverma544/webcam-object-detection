@@ -129,6 +129,14 @@ async def detect_objects(
         le=1.0,
         description="Optional form field for confidence threshold between 0.01 and 1.0",
     ),
+    classes: Optional[str] = Query(
+        default=None,
+        description="Optional comma-separated COCO class names or IDs to detect, e.g. 'person,cup' or '0,41'",
+    ),
+    classes_form: Optional[str] = Form(
+        default=None,
+        description="Optional form field for comma-separated COCO classes to detect",
+    ),
     detector: YOLOObjectDetector = Depends(get_detector),
     settings: Settings = Depends(get_settings),
 ) -> DetectionResponse:
@@ -216,11 +224,30 @@ async def detect_objects(
             detail=f"Uploaded image exceeds maximum size limit of {max_mb} MB.",
         )
 
+    # Resolve optional target classes filter (query param, form parameter, or multipart field)
+    raw_classes = classes if classes is not None else classes_form
+    if raw_classes is None:
+        try:
+            form_data = await request.form()
+            form_classes = form_data.get("classes")
+            if form_classes is not None and str(form_classes).strip() != "":
+                raw_classes = str(form_classes)
+        except Exception:
+            pass
+
+    resolved_classes: Optional[List[int]] = None
+    if raw_classes is not None and raw_classes.strip() != "":
+        class_tokens = [c.strip() for c in raw_classes.split(",") if c.strip()]
+        resolved_classes = detector.resolve_class_ids(class_tokens)
+        if resolved_classes is None and len(class_tokens) > 0:
+            resolved_classes = []
+
     # Decode image and run YOLO inference
     try:
         return detector.detect(
             image_bytes=contents,
             confidence=resolved_confidence,
+            classes=resolved_classes,
         )
     except ValueError as exc:
         raise HTTPException(

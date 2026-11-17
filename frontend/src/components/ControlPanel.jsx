@@ -35,26 +35,14 @@ export function ControlPanel({
       <div className="controls-row">
         <div className="button-group">
           {!isCameraActive ? (
-            <>
-              <button
-                type="button"
-                className="btn btn-primary"
-                onClick={onStartCamera}
-                disabled={isCameraStarting}
-              >
-                {isCameraStarting ? "Starting Camera..." : "Start Camera"}
-              </button>
-              {hasMetrics && (
-                <button
-                  type="button"
-                  className="btn btn-metrics"
-                  onClick={onShowMetrics}
-                  title="View detailed summary and metrics of the last session"
-                >
-                  Show Metrics
-                </button>
-              )}
-            </>
+            <button
+              type="button"
+              className="btn btn-primary"
+              onClick={onStartCamera}
+              disabled={isCameraStarting}
+            >
+              {isCameraStarting ? "Starting Camera..." : "Start Camera"}
+            </button>
           ) : (
             <button
               type="button"
@@ -64,6 +52,20 @@ export function ControlPanel({
               Stop Camera
             </button>
           )}
+
+          <button
+            type="button"
+            className="btn btn-metrics"
+            onClick={onShowMetrics}
+            disabled={!hasMetrics}
+            title={
+              hasMetrics
+                ? "View detailed summary and metrics of the last session"
+                : "Session metrics will be available after stopping the camera"
+            }
+          >
+            Show Metrics
+          </button>
 
           <button
             type="button"
@@ -105,7 +107,9 @@ export function ControlPanel({
           </div>
 
           <div className="interval-control">
-            <label htmlFor="interval-select">Frame Cadence</label>
+            <div className="slider-label-row">
+              <label htmlFor="interval-select">Frame Cadence</label>
+            </div>
             <select
               id="interval-select"
               value={captureIntervalMs}

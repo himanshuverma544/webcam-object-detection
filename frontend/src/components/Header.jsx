@@ -84,10 +84,6 @@ export function Header({
           </span>
           <h1>YOLO11 Real-Time Object Detection</h1>
         </div>
-        <p className="brand-subtitle">
-          Live webcam computer vision powered by Ultralytics YOLO11n, OpenCV &amp;
-          FastAPI ({API_BASE_URL})
-        </p>
       </div>
 
       <div className="header-statuses">

@@ -72,6 +72,10 @@ class FakeYOLOModel:
             ([50.0, 40.0, 280.0, 420.0], 0.91, 0, 1),   # person
             ([310.0, 200.0, 520.0, 390.0], 0.48, 63, 2),  # laptop
         ]
+        target_classes = kwargs.get("classes")
+        if target_classes is not None:
+            raw_boxes = [b for b in raw_boxes if b[2] in target_classes]
+
         filtered = [b for b in raw_boxes if b[1] >= conf]
         if not filtered:
             return [FakeResult(FakeBoxes([], [], []))]

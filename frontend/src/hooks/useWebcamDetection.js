@@ -72,6 +72,19 @@ export function useWebcamDetection() {
   const [captureIntervalMs, setCaptureIntervalMs] = useState(INITIAL_INTERVAL_MS);
   const confidenceRef = useRef(confidence);
 
+  // Selected classes filter state (empty array = 0 detections, inactive until classes selected)
+  const [selectedClasses, setSelectedClasses] = useState([]);
+  const selectedClassesRef = useRef(selectedClasses);
+
+  // Keep selectedClassesRef synchronized and immediately clear detections if 0 classes selected
+  useEffect(() => {
+    selectedClassesRef.current = selectedClasses;
+    if (selectedClasses.length === 0) {
+      setDetections([]);
+      setDetectionCount(0);
+    }
+  }, [selectedClasses]);
+
   // Detection results state
   const [detections, setDetections] = useState([]);
   const [detectionCount, setDetectionCount] = useState(0);
@@ -294,6 +307,17 @@ export function useWebcamDetection() {
       return;
     }
 
+    // Option A: If no classes are selected, detection is inactive (0 detections)
+    if (selectedClassesRef.current.length === 0) {
+      setDetections([]);
+      setDetectionCount(0);
+      setInferenceTimeMs(null);
+      setRoundTripTimeMs(null);
+      setDetectionError(null);
+      setDetectionStatus("running");
+      return;
+    }
+
     inFlightRef.current = true;
     const controller = new AbortController();
     abortControllerRef.current = controller;
@@ -329,6 +353,7 @@ export function useWebcamDetection() {
       const result = await detectObjects(
         frameBlob,
         confidenceRef.current,
+        selectedClassesRef.current,
         controller.signal
       );
 
@@ -345,12 +370,16 @@ export function useWebcamDetection() {
         width: uploadedWidth,
         height: uploadedHeight,
       });
-      setDetections(Array.isArray(result.detections) ? result.detections : []);
-      setDetectionCount(
-        typeof result.detection_count === "number"
-          ? result.detection_count
-          : (result.detections || []).length
-      );
+
+      const rawDetections = Array.isArray(result.detections) ? result.detections : [];
+      const currentSelected = selectedClassesRef.current;
+      const filteredDetections =
+        Array.isArray(currentSelected) && currentSelected.length > 0
+          ? rawDetections.filter((d) => currentSelected.includes(d.label))
+          : rawDetections;
+
+      setDetections(filteredDetections);
+      setDetectionCount(filteredDetections.length);
       setInferenceTimeMs(
         typeof result.inference_time_ms === "number"
           ? result.inference_time_ms
@@ -425,6 +454,8 @@ export function useWebcamDetection() {
     backendStatus,
     healthInfo,
     supportedClasses,
+    selectedClasses,
+    setSelectedClasses,
     startCamera,
     stopCamera,
     pauseDetection,

@@ -1,158 +1,239 @@
 import React, { useState } from "react";
+import { FiCheck, FiSearch, FiX } from "react-icons/fi";
 import { getClassColor } from "./VideoViewport";
 
+const DEFAULT_COCO_CLASSES = [
+  "person", "bicycle", "car", "motorcycle", "airplane", "bus", "train", "truck", "boat", "traffic light",
+  "fire hydrant", "stop sign", "parking meter", "bench", "bird", "cat", "dog", "horse", "sheep", "cow",
+  "elephant", "bear", "zebra", "giraffe", "backpack", "umbrella", "handbag", "tie", "suitcase", "frisbee",
+  "skis", "snowboard", "sports ball", "kite", "baseball bat", "baseball glove", "skateboard", "surfboard",
+  "tennis racket", "bottle", "wine glass", "cup", "fork", "knife", "spoon", "bowl", "banana", "apple",
+  "sandwich", "orange", "broccoli", "carrot", "hot dog", "pizza", "donut", "cake", "chair", "couch",
+  "potted plant", "bed", "dining table", "toilet", "tv", "laptop", "mouse", "remote", "keyboard",
+  "cell phone", "microwave", "oven", "toaster", "sink", "refrigerator", "book", "clock", "vase",
+  "scissors", "teddy bear", "hair drier", "toothbrush",
+];
+
 export function DetectionList({
-  detections,
-  detectionCount,
-  inferenceTimeMs,
-  sourceFrameSize,
-  cameraStatus,
-  isDetecting,
-  supportedClasses,
-  lastUpdatedAt,
+  supportedClasses = [],
+  selectedClasses = [],
+  onSelectClasses,
+  detectionCount = 0,
 }) {
-  const [showClassesDrawer, setShowClassesDrawer] = useState(false);
+  const [searchQuery, setSearchQuery] = useState("");
+
+  const allClasses =
+    Array.isArray(supportedClasses) && supportedClasses.length > 0
+      ? supportedClasses
+      : DEFAULT_COCO_CLASSES;
+
+  // Split classes into Active (selected) and Inactive (unselected)
+  const activeClasses = allClasses.filter((cls) => selectedClasses.includes(cls));
+  const inactiveClasses = allClasses.filter((cls) => !selectedClasses.includes(cls));
+
+  // Filter both groups in-place based on the user's search query
+  const trimmedQuery = searchQuery.trim().toLowerCase();
+  const visibleActive = trimmedQuery
+    ? activeClasses.filter((cls) => cls.toLowerCase().includes(trimmedQuery))
+    : activeClasses;
+  const visibleInactive = trimmedQuery
+    ? inactiveClasses.filter((cls) => cls.toLowerCase().includes(trimmedQuery))
+    : inactiveClasses;
+
+  const totalVisible = visibleActive.length + visibleInactive.length;
+
+  const handleToggleClass = (clsName) => {
+    if (!onSelectClasses) return;
+    if (selectedClasses.includes(clsName)) {
+      onSelectClasses(selectedClasses.filter((c) => c !== clsName));
+    } else {
+      onSelectClasses([...selectedClasses, clsName]);
+    }
+  };
+
+  const handleClearAll = () => {
+    if (onSelectClasses) {
+      onSelectClasses([]);
+    }
+  };
+
+  const handleSelectAll = () => {
+    if (onSelectClasses) {
+      onSelectClasses([...allClasses]);
+    }
+  };
 
   return (
-    <aside className="detection-sidebar-card" aria-label="Detected objects list">
+    <aside className="detection-sidebar-card" aria-label="Supported COCO classes selector">
       <div className="sidebar-header">
         <div>
-          <h2>Detected Objects</h2>
+          <h2>Supported COCO Classes</h2>
           <p className="sidebar-subtitle">
-            {inferenceTimeMs !== null
-              ? `Inference: ${inferenceTimeMs.toFixed(1)} ms • Frame: ${sourceFrameSize.width}×${sourceFrameSize.height}px`
-              : "Live frame detections & bounding boxes"}
+            Click pills to select or deselect which objects to detect
           </p>
         </div>
-        <span className="count-badge" title="Total detected objects in current frame">
-          {detectionCount}
+        <span
+          className={`count-badge ${activeClasses.length > 0 ? "has-selection" : ""}`}
+          title={`${activeClasses.length} of ${allClasses.length} classes active`}
+        >
+          {activeClasses.length} / {allClasses.length}
         </span>
       </div>
 
-      {lastUpdatedAt && (
-        <div className="sidebar-timestamp">
-          Last updated: {lastUpdatedAt.toLocaleTimeString()}
+      {/* Toolbar with Select All and Clear All displayed using justify-between end to end */}
+      <div className="classes-toolbar-row">
+        <button
+          type="button"
+          className="btn-classes-toggle-all btn-select-all"
+          onClick={handleSelectAll}
+          title="Select all 80 classes"
+          disabled={activeClasses.length === allClasses.length}
+        >
+          Select All
+        </button>
+        <button
+          type="button"
+          className="btn-classes-toggle-all btn-clear-all"
+          onClick={handleClearAll}
+          title="Clear all selected classes"
+          disabled={activeClasses.length === 0}
+        >
+          Clear All
+        </button>
+      </div>
+
+      {/* In-place search field to filter pills */}
+      <div className="classes-search-bar">
+        <div className="search-input-wrapper">
+          <FiSearch className="search-field-icon" aria-hidden="true" />
+          <input
+            type="text"
+            className="classes-filter-input"
+            placeholder="Search classes (e.g. car, cup, phone)..."
+            value={searchQuery}
+            onChange={(e) => setSearchQuery(e.target.value)}
+            aria-label="Filter COCO classes pills"
+          />
+          {searchQuery && (
+            <button
+              type="button"
+              className="btn-search-clear"
+              onClick={() => setSearchQuery("")}
+              title="Clear search filter"
+              aria-label="Clear search query"
+            >
+              <FiX />
+            </button>
+          )}
         </div>
-      )}
-
-      <div className="detections-scroll-area">
-        {cameraStatus !== "active" ? (
-          <div className="empty-detections-state">
-            <p>Start the camera to detect objects in real time.</p>
-            <span className="empty-hint">
-              Detects 80 COCO object categories including people, bottles, cups,
-              cell phones, laptops, chairs, books, and cars.
+        {trimmedQuery && (
+          <div className="search-results-meta">
+            <span>
+              Showing {totalVisible} of {allClasses.length} classes
             </span>
           </div>
-        ) : detections.length === 0 ? (
-          <div className="empty-detections-state">
-            <p>
-              {isDetecting
-                ? "No objects detected above current confidence threshold."
-                : "Detection is currently paused."}
-            </p>
-            <span className="empty-hint">
-              Try holding up a phone, cup, bottle, or book, or lower the
-              confidence slider.
-            </span>
-          </div>
-        ) : (
-          <ul className="detection-items-list">
-            {detections.map((item, idx) => {
-              const color = getClassColor(item.class_id);
-              const pct = ((item.confidence || 0) * 100).toFixed(1);
-              const [x1, y1, x2, y2] = (item.bbox || [0, 0, 0, 0]).map((v) =>
-                Math.round(v)
-              );
-
-              return (
-                <li
-                  key={`${item.class_id}-${idx}-${x1}-${y1}`}
-                  className="detection-item-card"
-                >
-                  <div className="detection-item-top">
-                    <div className="detection-label-group">
-                      <span
-                        className="detection-color-swatch"
-                        style={{ backgroundColor: color }}
-                      />
-                      <span className="detection-label-name">{item.label}</span>
-                      {item.track_id !== undefined && item.track_id !== null && (
-                        <span className="detection-track-id">
-                          Track #{item.track_id}
-                        </span>
-                      )}
-                      <span className="detection-class-id">
-                        ID #{item.class_id}
-                      </span>
-                    </div>
-                    <strong className="detection-confidence-score">
-                      {pct}%
-                    </strong>
-                  </div>
-
-                  <div className="confidence-bar-track">
-                    <div
-                      className="confidence-bar-fill"
-                      style={{
-                        width: `${Math.min(100, Math.max(2, Number(pct)))}%`,
-                        backgroundColor: color,
-                      }}
-                    />
-                  </div>
-
-                  <div className="detection-bbox-coords">
-                    <span className="bbox-tag">BBox [x1, y1, x2, y2]:</span>
-                    <code>
-                      [{x1}, {y1}, {x2}, {y2}]
-                    </code>
-                  </div>
-                </li>
-              );
-            })}
-          </ul>
         )}
       </div>
 
-      <div className="classes-footer">
-        <button
-          type="button"
-          className="classes-toggle-btn"
-          onClick={() => setShowClassesDrawer((prev) => !prev)}
-        >
-          <span>
-            Supported COCO Classes (
-            {supportedClasses.length > 0 ? supportedClasses.length : 80})
-          </span>
-          <span>{showClassesDrawer ? "▲" : "▼"}</span>
-        </button>
-
-        {showClassesDrawer && (
-          <div className="classes-pill-container">
-            {(supportedClasses.length > 0
-              ? supportedClasses
-              : [
-                  "person",
-                  "bicycle",
-                  "car",
-                  "bottle",
-                  "cup",
-                  "chair",
-                  "couch",
-                  "laptop",
-                  "mouse",
-                  "keyboard",
-                  "cell phone",
-                  "book",
-                  "clock",
-                  "backpack",
-                ]
-            ).map((clsName) => (
-              <span key={clsName} className="coco-class-pill">
-                {clsName}
-              </span>
-            ))}
+      {/* Scrollable area with two dividers: Active on top, Inactive below */}
+      <div className="classes-pill-scroll-area">
+        {trimmedQuery && totalVisible === 0 ? (
+          <div className="no-pills-found">
+            <p>No COCO classes match &ldquo;{searchQuery}&rdquo;</p>
+            <button
+              type="button"
+              className="btn-reset-search"
+              onClick={() => setSearchQuery("")}
+            >
+              Show all 80 classes
+            </button>
           </div>
+        ) : (
+          <>
+            {/* 1. Active Divider */}
+            <div className="classes-section-divider active-divider" aria-label="Active classes divider">
+              <span className="divider-line" />
+              <span className="divider-badge active-badge">
+                Active ({activeClasses.length})
+              </span>
+              <span className="divider-line" />
+            </div>
+
+            {/* Active Pills */}
+            {visibleActive.length === 0 ? (
+              <p className="empty-group-note">
+                {trimmedQuery
+                  ? `No active classes match "${searchQuery}"`
+                  : "No active classes. Click pills below to select."}
+              </p>
+            ) : (
+              <div
+                className="classes-pill-container active-group"
+                role="group"
+                aria-label="Active COCO classes"
+              >
+                {visibleActive.map((clsName) => {
+                  const classIdx = allClasses.indexOf(clsName);
+                  const color = getClassColor(classIdx >= 0 ? classIdx : 0);
+                  return (
+                    <button
+                      key={clsName}
+                      type="button"
+                      className="coco-class-pill selected"
+                      onClick={() => handleToggleClass(clsName)}
+                      title={`Click to deselect '${clsName}'`}
+                      style={{
+                        borderColor: color,
+                        backgroundColor: "rgba(56, 189, 248, 0.16)",
+                        color: "#ffffff",
+                      }}
+                      aria-pressed="true"
+                    >
+                      <FiCheck className="pill-check-icon" />
+                      <span>{clsName}</span>
+                    </button>
+                  );
+                })}
+              </div>
+            )}
+
+            {/* 2. Inactive Divider */}
+            <div className="classes-section-divider inactive-divider" aria-label="Inactive classes divider">
+              <span className="divider-line" />
+              <span className="divider-badge inactive-badge">
+                Inactive ({inactiveClasses.length})
+              </span>
+              <span className="divider-line" />
+            </div>
+
+            {/* Inactive Pills */}
+            {visibleInactive.length === 0 ? (
+              <p className="empty-group-note">
+                {trimmedQuery
+                  ? `No inactive classes match "${searchQuery}"`
+                  : "All classes are currently active."}
+              </p>
+            ) : (
+              <div
+                className="classes-pill-container inactive-group"
+                role="group"
+                aria-label="Inactive COCO classes"
+              >
+                {visibleInactive.map((clsName) => (
+                  <button
+                    key={clsName}
+                    type="button"
+                    className="coco-class-pill"
+                    onClick={() => handleToggleClass(clsName)}
+                    title={`Click to detect '${clsName}'`}
+                    aria-pressed="false"
+                  >
+                    <span>{clsName}</span>
+                  </button>
+                ))}
+              </div>
+            )}
+          </>
         )}
       </div>
     </aside>
