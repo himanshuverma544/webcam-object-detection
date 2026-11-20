@@ -1,4 +1,5 @@
 import React from "react";
+import { FiAlertOctagon, FiAlertTriangle } from "react-icons/fi";
 
 export function MissingAlertBanner({ missingItems = [], onDismiss }) {
   if (!Array.isArray(missingItems) || missingItems.length === 0) {
@@ -15,7 +16,9 @@ export function MissingAlertBanner({ missingItems = [], onDismiss }) {
     >
       <div className="missing-alert-header">
         <div className="alert-title-wrap">
-          <span className="alert-siren-icon">[{hasGuardedBreach ? "BREACH" : "ALERT"}]</span>
+          <span className="alert-siren-icon" aria-hidden="true">
+            {hasGuardedBreach ? <FiAlertOctagon /> : <FiAlertTriangle />}
+          </span>
           <div>
             <h4 className="alert-heading">
               {hasGuardedBreach

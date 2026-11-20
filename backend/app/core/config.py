@@ -34,6 +34,15 @@ class Settings(BaseSettings):
 
     # AI / Computer Vision model settings
     yolo_model_path: str = Field(default="yolo11n.pt", alias="YOLO_MODEL_PATH")
+    yoloe_model_path: str = Field(
+        default="yoloe-11s-seg.pt", alias="YOLOE_MODEL_PATH"
+    )
+    custom_items_dir: str = Field(
+        default="data/custom_items", alias="CUSTOM_ITEMS_DIR"
+    )
+    default_similarity_threshold: float = Field(
+        default=0.65, ge=0.1, le=1.0, alias="DEFAULT_SIMILARITY_THRESHOLD"
+    )
     default_confidence: float = Field(
         default=0.35, ge=0.01, le=1.0, alias="DEFAULT_CONFIDENCE"
     )

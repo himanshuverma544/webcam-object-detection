@@ -493,5 +493,173 @@ def test_detect_with_class_filter_no_match(
     assert len(data["detections"]) == 0
 
 
+class _FakeCustomDetector:
+    """Lightweight in-memory stub of CustomObjectDetector for fast API tests."""
+
+    def __init__(self) -> None:
+        from app.schemas.detection import CustomItemOut
+
+        self.is_ready = True
+        self.device = "cpu"
+        self._items = {}
+        self._CustomItemOut = CustomItemOut
+
+    def list_items(self):
+        return list(self._items.values())
+
+    def add_item(self, name: str, image_bytes_list, bboxes_norm=None):
+        if not name.strip():
+            raise ValueError("Item name cannot be empty.")
+        iid = f"item_{len(self._items) + 1}"
+        item = self._CustomItemOut(
+            id=iid,
+            name=name.strip(),
+            class_id=1000 + len(self._items),
+            image_count=len(image_bytes_list),
+            thumbnail_base64="data:image/jpeg;base64,/9j/4AAQ",
+            created_at="2026-11-18T00:00:00+00:00",
+        )
+        self._items[iid] = item
+        self.last_bboxes = bboxes_norm
+        return item
+
+    def add_images_to_item(self, item_id: str, image_bytes_list, bboxes_norm=None):
+        if item_id not in self._items:
+            raise KeyError(f"Custom item '{item_id}' not found.")
+        old = self._items[item_id]
+        updated = old.model_copy(update={"image_count": old.image_count + len(image_bytes_list)})
+        self._items[item_id] = updated
+        self.last_bboxes = bboxes_norm
+        return updated
+
+    def delete_item(self, item_id: str) -> bool:
+        return self._items.pop(item_id, None) is not None
+
+    def reset_tracker(self) -> None:
+        pass
+
+    def unload(self) -> None:
+        pass
+
+    def detect_bgr(self, image_bgr, item_ids, confidence=0.35, similarity_threshold=None):
+        from app.schemas.detection import DetectionItem
+
+        out = []
+        for iid in item_ids:
+            if iid in self._items:
+                item = self._items[iid]
+                out.append(
+                    DetectionItem(
+                        label=item.name,
+                        class_id=item.class_id,
+                        confidence=0.88,
+                        bbox=[10.0, 20.0, 120.0, 180.0],
+                        track_id=10001,
+                        is_custom=True,
+                        custom_item_id=item.id,
+                        similarity=0.91,
+                    )
+                )
+        return out, 14.5
+
+
+def test_custom_items_crud_endpoints(
+    client: TestClient, sample_jpeg_bytes: bytes
+) -> None:
+    """Custom reference items support list, create, add-images, and delete."""
+    fake = _FakeCustomDetector()
+    client.app.state.custom_detector = fake
+
+    res_list = client.get("/custom-items")
+    assert res_list.status_code == 200
+    assert res_list.json()["count"] == 0
+
+    res_create = client.post(
+        "/custom-items",
+        data={"name": "My Office Chair"},
+        files=[("files", ("chair.jpg", sample_jpeg_bytes, "image/jpeg"))],
+    )
+    assert res_create.status_code == 201
+    created = res_create.json()
+    assert created["name"] == "My Office Chair"
+    assert created["image_count"] == 1
+    assert created["class_id"] >= 1000
+
+    res_add = client.post(
+        f"/custom-items/{created['id']}/images",
+        files=[("files", ("chair_side.jpg", sample_jpeg_bytes, "image/jpeg"))],
+    )
+    assert res_add.status_code == 200
+    assert res_add.json()["image_count"] == 2
+
+    res_del = client.delete(f"/custom-items/{created['id']}")
+    assert res_del.status_code == 200
+    assert res_del.json()["deleted_id"] == created["id"]
+
+    res_del_missing = client.delete("/custom-items/item_nonexistent")
+    assert res_del_missing.status_code == 404
+
+
+def test_detect_custom_only_and_merged_with_coco(
+    client: TestClient, sample_jpeg_bytes: bytes
+) -> None:
+    """POST /detect supports custom-only detection and merged COCO + custom detection."""
+    fake = _FakeCustomDetector()
+    client.app.state.custom_detector = fake
+    created = fake.add_item("My Chair", [sample_jpeg_bytes])
+
+    # Custom-only (classes empty) skips COCO and returns only custom item
+    res_custom_only = client.post(
+        f"/detect?confidence=0.35&classes=&custom_items={created.id}&similarity_threshold=0.65",
+        files={"file": ("webcam.jpg", sample_jpeg_bytes, "image/jpeg")},
+    )
+    assert res_custom_only.status_code == 200
+    data_only = res_custom_only.json()
+    assert data_only["detection_count"] == 1
+    assert data_only["detections"][0]["label"] == "My Chair"
+    assert data_only["detections"][0]["is_custom"] is True
+    assert data_only["detections"][0]["custom_item_id"] == created.id
+    assert data_only["detections"][0]["similarity"] == 0.91
+
+    # Merged COCO (person) + Custom (My Chair)
+    res_merged = client.post(
+        f"/detect?confidence=0.35&classes=person&custom_items={created.id}",
+        files={"file": ("webcam.jpg", sample_jpeg_bytes, "image/jpeg")},
+    )
+    assert res_merged.status_code == 200
+    data_merged = res_merged.json()
+    assert data_merged["detection_count"] == 2
+    labels = {d["label"] for d in data_merged["detections"]}
+    assert labels == {"person", "My Chair"}
+
+
+def test_auto_box_endpoint_and_custom_bboxes_form(
+    client: TestClient, sample_jpeg_bytes: bytes
+) -> None:
+    """POST /custom-items/auto-box returns valid normalized bbox and POST /custom-items accepts bboxes JSON."""
+    res_auto = client.post(
+        "/custom-items/auto-box",
+        files={"file": ("wallet.jpg", sample_jpeg_bytes, "image/jpeg")},
+    )
+    assert res_auto.status_code == 200
+    auto_data = res_auto.json()
+    assert len(auto_data["bbox_norm"]) == 4
+    x1, y1, x2, y2 = auto_data["bbox_norm"]
+    assert 0.0 <= x1 < x2 <= 1.0
+    assert 0.0 <= y1 < y2 <= 1.0
+
+    fake = _FakeCustomDetector()
+    client.app.state.custom_detector = fake
+    res_create = client.post(
+        "/custom-items",
+        data={"name": "My Wallet", "bboxes": "[[0.23, 0.32, 0.78, 0.71]]"},
+        files=[("files", ("wallet.jpg", sample_jpeg_bytes, "image/jpeg"))],
+    )
+    assert res_create.status_code == 201
+    assert fake.last_bboxes == [[0.23, 0.32, 0.78, 0.71]]
+
+
+
+
 
 

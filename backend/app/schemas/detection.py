@@ -89,6 +89,20 @@ class DetectionItem(BaseModel):
         description="Persistent tracking ID assigned by ByteTrack across video frames",
         examples=[1],
     )
+    is_custom: bool = Field(
+        default=False,
+        description="True when matched via a user-uploaded custom reference item",
+    )
+    custom_item_id: Optional[str] = Field(
+        default=None,
+        description="Identifier of the matched custom reference item",
+    )
+    similarity: Optional[float] = Field(
+        default=None,
+        ge=0.0,
+        le=1.0,
+        description="Visual instance similarity score between detected crop and reference item",
+    )
 
 
 class ResetTrackResponse(BaseModel):
@@ -173,3 +187,57 @@ class EmailMetricsResponse(BaseModel):
         description="Destination email address where report was dispatched",
         examples=["user@example.com"],
     )
+
+
+class CustomItemOut(BaseModel):
+    """Metadata and thumbnail preview for a registered custom reference item."""
+
+    id: str = Field(..., description="Unique custom item identifier", examples=["item_a1b2c3d4"])
+    name: str = Field(..., description="User-assigned item name", examples=["My Office Chair"])
+    class_id: int = Field(..., ge=1000, description="Assigned custom class ID (>= 1000)")
+    image_count: int = Field(..., ge=1, description="Number of reference photos indexed for this item")
+    thumbnail_base64: str = Field(
+        ...,
+        description="Base64 JPEG data URL preview of the item's primary reference image",
+    )
+    created_at: str = Field(..., description="ISO-8601 UTC creation timestamp")
+
+
+class CustomItemsListResponse(BaseModel):
+    """List of registered custom reference items."""
+
+    count: int = Field(..., ge=0, description="Number of saved custom reference items")
+    items: List[CustomItemOut] = Field(default_factory=list)
+    yoloe_ready: bool = Field(
+        default=False,
+        description="True when YOLOE visual-prompt engine has been initialized",
+    )
+    device: str = Field(default="cpu", description="Compute device used for custom visual detection")
+
+
+class CustomItemDeleteResponse(BaseModel):
+    """Confirmation payload after deleting a custom reference item."""
+
+    status: str = Field(..., examples=["ok"])
+    message: str = Field(..., examples=["Custom item deleted"])
+    deleted_id: str = Field(..., examples=["item_a1b2c3d4"])
+
+
+class AutoBoxResponse(BaseModel):
+    """Suggested foreground bounding box returned by POST /custom-items/auto-box."""
+
+    width: int = Field(..., gt=0)
+    height: int = Field(..., gt=0)
+    bbox_norm: List[float] = Field(
+        ...,
+        min_length=4,
+        max_length=4,
+        description="Normalized foreground box [x1, y1, x2, y2] in [0.0, 1.0]",
+    )
+    bbox_px: List[float] = Field(
+        ...,
+        min_length=4,
+        max_length=4,
+        description="Pixel foreground box [x1, y1, x2, y2]",
+    )
+    method: str = Field(default="grabcut", description="Algorithm used to estimate foreground box")

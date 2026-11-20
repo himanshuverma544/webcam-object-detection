@@ -1,5 +1,10 @@
 from __future__ import annotations
 
+import os
+
+# Enable MPS CPU fallback for torchvision::nms on Apple Silicon
+os.environ.setdefault("PYTORCH_ENABLE_MPS_FALLBACK", "1")
+
 from contextlib import asynccontextmanager
 import logging
 from typing import AsyncGenerator
@@ -11,6 +16,7 @@ from fastapi.responses import JSONResponse
 
 from app.api.routes import router as api_router
 from app.core.config import Settings, get_settings
+from app.services.custom_detector import CustomObjectDetector
 from app.services.detector import YOLOObjectDetector
 
 
@@ -51,11 +57,24 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     else:
         logger.info("Using pre-configured detector instance on app.state.detector.")
 
+    existing_custom = getattr(app.state, "custom_detector", None)
+    if existing_custom is None:
+        app.state.custom_detector = CustomObjectDetector(
+            yoloe_model_path=settings.yoloe_model_path,
+            storage_dir=settings.custom_items_dir,
+            preferred_device=settings.device,
+            default_similarity_threshold=settings.default_similarity_threshold,
+        )
+
     yield
 
     active_detector = getattr(app.state, "detector", None)
     if active_detector is not None and existing_detector is None:
         active_detector.unload_model()
+
+    active_custom = getattr(app.state, "custom_detector", None)
+    if active_custom is not None and existing_custom is None:
+        active_custom.unload()
 
 
 def create_app() -> FastAPI:
@@ -111,6 +130,25 @@ def create_app() -> FastAPI:
         )
 
     application.include_router(api_router)
+
+    # Mount frontend static assets if built dist exists (enables single-container Cloud Run deployment)
+    static_dirs = [
+        os.path.join(
+            os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))),
+            "frontend",
+            "dist",
+        ),
+        "/app/frontend/dist",
+        os.path.abspath("frontend/dist"),
+    ]
+    for static_dir in static_dirs:
+        if os.path.isdir(static_dir):
+            from fastapi.staticfiles import StaticFiles
+
+            application.mount("/", StaticFiles(directory=static_dir, html=True), name="frontend")
+            logger.info("Mounted frontend static build from %s", static_dir)
+            break
+
     return application
 
 

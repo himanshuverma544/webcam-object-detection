@@ -1,10 +1,13 @@
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
+import ReactMarkdown from "react-markdown";
 import { sendMetricsEmail } from "../services/api";
+import { generateExecutiveSummary } from "../utils/summaryGenerator";
 
 const DEFAULT_RECIPIENT = (import.meta.env.VITE_DEFAULT_RECIPIENT_EMAIL || "").trim();
 
 export function MetricsModal({ isOpen, onClose, metrics }) {
   const [copied, setCopied] = useState(false);
+  const [viewMode, setViewMode] = useState("metrics"); // 'metrics' | 'summary'
   const [emailStatus, setEmailStatus] = useState("idle"); // 'idle' | 'sending' | 'success' | 'error'
   const [emailMessage, setEmailMessage] = useState("");
 
@@ -26,49 +29,20 @@ export function MetricsModal({ isOpen, onClose, metrics }) {
       setEmailStatus("idle");
       setEmailMessage("");
       setCopied(false);
+      setViewMode("metrics");
     }
   }, [isOpen]);
+
+  const summaryText = useMemo(() => {
+    return metrics ? generateExecutiveSummary(metrics) : "";
+  }, [metrics]);
 
   if (!isOpen || !metrics) {
     return null;
   }
 
   const handleCopy = () => {
-    const textSummary = `
-=========================================
-  WEBCAM OBJECT DETECTION SESSION REPORT
-=========================================
-Timestamp: ${metrics.timestamp}
-Session Duration: ${metrics.durationFormatted}
-Guard Duration: ${metrics.guardedFormatted}
-Total Frames Processed: ${metrics.frameCount} (${metrics.avgFps})
-
-1. SECURITY & ALERTS
-- Status: ${metrics.statusMessage}
-- Missing Incidents: ${metrics.missingIncidentsCount}
-- Unresolved Missing: ${metrics.unresolvedMissingCount} (${metrics.unresolvedMissing?.map((i) => i.label).join(", ") || "None"})
-- Restored Items: ${metrics.restoredCount}
-- Movement Alerts: ${metrics.movementEventsCount}
-
-2. ACTIVITY & OBJECTS
-- Peak Objects: ${metrics.peakObjectCount}
-- Unique Tracked Entities: ${metrics.uniqueEntitiesCount}
-- Top Classes: ${metrics.topClasses?.map((c) => `${c.label} (${c.percent}%)`).join(", ") || "None"}
-
-3. MOVEMENT & DYNAMICS
-- Total Movement Events: ${metrics.movementEventsCount}
-- Most Active Item: ${metrics.mostActiveObject ? `${metrics.mostActiveObject.label} (${metrics.mostActiveObject.moves} moves)` : "None"}
-- Scene Stability: ${metrics.stabilityRatio}
-
-4. SYSTEM PERFORMANCE
-- Avg Backend Inference: ${metrics.avgInferenceMs}
-- Avg Round-Trip Latency: ${metrics.avgRttMs}
-- Frame Cadence: ${metrics.avgFps}
-- Confidence Threshold: ${metrics.confidenceThreshold}
-=========================================
-`.trim();
-
-    navigator.clipboard.writeText(textSummary).then(() => {
+    navigator.clipboard.writeText(summaryText).then(() => {
       setCopied(true);
       setTimeout(() => setCopied(false), 2000);
     }).catch(() => {});
@@ -106,10 +80,22 @@ Total Frames Processed: ${metrics.frameCount} (${metrics.avgFps})
         <div className="modal-header">
           <div className="modal-header-info">
             <div className="modal-title-row">
-              <h2>Session Summary &amp; Detection Metrics</h2>
+              <h2>
+                {viewMode === "summary"
+                  ? "Executive Session Summary"
+                  : "Session Summary & Detection Metrics"}
+              </h2>
             </div>
             <p className="modal-subtitle">
-              Recorded: <strong>{metrics.timestamp}</strong> &bull; Total Session: <strong>{metrics.durationFormatted}</strong>
+              {viewMode === "summary" ? (
+                <>
+                  Format: <strong>24-Hour UTC</strong> &bull; Total Session: <strong>{metrics.durationFormatted}</strong>
+                </>
+              ) : (
+                <>
+                  Recorded: <strong>{metrics.timestamp}</strong> &bull; Total Session: <strong>{metrics.durationFormatted}</strong>
+                </>
+              )}
             </p>
           </div>
           <div className="modal-header-actions">
@@ -128,8 +114,22 @@ Total Frames Processed: ${metrics.frameCount} (${metrics.avgFps})
           </div>
         </div>
 
-        {/* Quick KPI Overview Tiles */}
-        <div className="modal-kpi-grid">
+        {viewMode === "summary" ? (
+          <div className="modal-summary-body">
+            <div className="summary-paper">
+              <div className="summary-paper-header">
+                <span className="summary-paper-badge">Executive Session Report</span>
+                <span className="summary-paper-date">24-Hour UTC Format</span>
+              </div>
+              <div className="summary-rendered-markdown">
+                <ReactMarkdown>{summaryText}</ReactMarkdown>
+              </div>
+            </div>
+          </div>
+        ) : (
+          <>
+            {/* Quick KPI Overview Tiles */}
+            <div className="modal-kpi-grid">
           <div className="modal-kpi-card">
             <span className="kpi-label">Session Duration</span>
             <span className="kpi-value">{metrics.durationFormatted}</span>
@@ -377,6 +377,8 @@ Total Frames Processed: ${metrics.frameCount} (${metrics.avgFps})
             </div>
           </section>
         </div>
+        </>
+        )}
 
         {/* Email status banner if active */}
         {emailMessage && (
@@ -415,36 +417,68 @@ Total Frames Processed: ${metrics.frameCount} (${metrics.avgFps})
 
         {/* Modal Footer */}
         <div className="modal-footer">
-          <button
-            type="button"
-            className="btn btn-secondary"
-            onClick={handleCopy}
-            title="Copy plain-text summary to clipboard"
-          >
-            {copied ? "Copied to Clipboard" : "Copy Summary"}
-          </button>
+          {viewMode === "summary" ? (
+            <>
+              <button
+                type="button"
+                className="btn btn-secondary"
+                onClick={() => setViewMode("metrics")}
+                title="Return to detailed metrics dashboard"
+              >
+                &larr; Back
+              </button>
 
-          <button
-            type="button"
-            className="btn btn-primary"
-            onClick={handleSendEmail}
-            disabled={emailStatus === "sending"}
-            title="Send metrics report to configured recipient"
-          >
-            {emailStatus === "sending"
-              ? "Sending Email..."
-              : emailStatus === "success"
-              ? "Email Sent"
-              : "Email Metrics"}
-          </button>
+              <button
+                type="button"
+                className="btn btn-primary"
+                onClick={handleCopy}
+                title="Copy summary report to clipboard"
+              >
+                {copied ? "Copied to Clipboard!" : "Copy Summary"}
+              </button>
 
-          <button
-            type="button"
-            className="btn btn-secondary"
-            onClick={onClose}
-          >
-            Done
-          </button>
+              <button
+                type="button"
+                className="btn btn-secondary"
+                onClick={onClose}
+              >
+                Done
+              </button>
+            </>
+          ) : (
+            <>
+              <button
+                type="button"
+                className="btn btn-secondary"
+                onClick={() => setViewMode("summary")}
+                title="View executive session summary"
+              >
+                Show Summary
+              </button>
+
+              <button
+                type="button"
+                className="btn btn-primary"
+                onClick={handleSendEmail}
+                disabled={emailStatus === "sending"}
+                title="Send metrics report to configured recipient"
+              >
+                {emailStatus === "sending"
+                  ? "Sending Email..."
+                  : emailStatus === "success"
+                  ? "Email Sent"
+                  : "Email Metrics"}
+              </button>
+
+              <button
+                type="button"
+                className="btn btn-secondary"
+                onClick={onClose}
+              >
+                Done
+              </button>
+            </>
+          )}
         </div>
       </div>
     </div>

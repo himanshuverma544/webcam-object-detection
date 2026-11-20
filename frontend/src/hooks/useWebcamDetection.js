@@ -1,5 +1,14 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { detectObjects, fetchClasses, fetchHealth, resetTrack } from "../services/api";
+import {
+  addCustomItemImages,
+  createCustomItem,
+  deleteCustomItem,
+  detectObjects,
+  fetchClasses,
+  fetchCustomItems,
+  fetchHealth,
+  resetTrack,
+} from "../services/api";
 
 const INITIAL_CONFIDENCE = Number(
   import.meta.env.VITE_DEFAULT_CONFIDENCE || 0.35
@@ -72,18 +81,32 @@ export function useWebcamDetection() {
   const [captureIntervalMs, setCaptureIntervalMs] = useState(INITIAL_INTERVAL_MS);
   const confidenceRef = useRef(confidence);
 
-  // Selected classes filter state (empty array = 0 detections, inactive until classes selected)
+  // Selected classes filter state (empty array = 0 detections, inactive until classes/custom items selected)
   const [selectedClasses, setSelectedClasses] = useState([]);
   const selectedClassesRef = useRef(selectedClasses);
 
-  // Keep selectedClassesRef synchronized and immediately clear detections if 0 classes selected
+  // Custom visual-prompt reference items state
+  const [customItems, setCustomItems] = useState([]);
+  const [selectedCustomIds, setSelectedCustomIds] = useState([]);
+  const selectedCustomIdsRef = useRef(selectedCustomIds);
+  const [similarityThreshold, setSimilarityThreshold] = useState(0.65);
+  const similarityThresholdRef = useRef(similarityThreshold);
+  const [isUploadingCustom, setIsUploadingCustom] = useState(false);
+  const [customItemError, setCustomItemError] = useState(null);
+
+  // Keep refs synchronized and clear detections immediately if nothing is selected
   useEffect(() => {
     selectedClassesRef.current = selectedClasses;
-    if (selectedClasses.length === 0) {
+    selectedCustomIdsRef.current = selectedCustomIds;
+    if (selectedClasses.length === 0 && selectedCustomIds.length === 0) {
       setDetections([]);
       setDetectionCount(0);
     }
-  }, [selectedClasses]);
+  }, [selectedClasses, selectedCustomIds]);
+
+  useEffect(() => {
+    similarityThresholdRef.current = similarityThreshold;
+  }, [similarityThreshold]);
 
   // Detection results state
   const [detections, setDetections] = useState([]);
@@ -137,19 +160,123 @@ export function useWebcamDetection() {
     };
   }, [checkBackendHealth]);
 
-  useEffect(() => {
-    if (backendStatus === "ready" && supportedClasses.length === 0) {
-      fetchClasses()
-        .then((res) => {
-          if (mountedRef.current && Array.isArray(res.class_names)) {
-            setSupportedClasses(res.class_names);
-          }
-        })
-        .catch(() => {
-          // Non-fatal; classes will be retried when needed
-        });
+  const refreshCustomItems = useCallback(async () => {
+    try {
+      const res = await fetchCustomItems();
+      if (mountedRef.current && Array.isArray(res?.items)) {
+        setCustomItems(res.items);
+        const validIds = new Set(res.items.map((item) => item.id));
+        setSelectedCustomIds((prev) => prev.filter((id) => validIds.has(id)));
+      }
+    } catch {
+      // Non-fatal; retried on reconnect
     }
-  }, [backendStatus, supportedClasses.length]);
+  }, []);
+
+  useEffect(() => {
+    if (backendStatus === "ready") {
+      if (supportedClasses.length === 0) {
+        fetchClasses()
+          .then((res) => {
+            if (mountedRef.current && Array.isArray(res.class_names)) {
+              setSupportedClasses(res.class_names);
+            }
+          })
+          .catch(() => {
+            // Non-fatal; classes will be retried when needed
+          });
+      }
+      refreshCustomItems();
+    }
+  }, [backendStatus, supportedClasses.length, refreshCustomItems]);
+
+  const uploadCustomItem = useCallback(async (name, files, bboxes = null) => {
+    setIsUploadingCustom(true);
+    setCustomItemError(null);
+    try {
+      const created = await createCustomItem(name, files, bboxes);
+      if (!mountedRef.current) return null;
+      setCustomItems((prev) => [...prev, created]);
+      // Automatically activate newly uploaded item so detection starts immediately
+      setSelectedCustomIds((prev) =>
+        prev.includes(created.id) ? prev : [...prev, created.id]
+      );
+      return created;
+    } catch (err) {
+      if (mountedRef.current) {
+        setCustomItemError(err.message || "Failed to upload custom item.");
+      }
+      throw err;
+    } finally {
+      if (mountedRef.current) {
+        setIsUploadingCustom(false);
+      }
+    }
+  }, []);
+
+  const addImagesToCustomItem = useCallback(async (itemId, files, bboxes = null) => {
+    setIsUploadingCustom(true);
+    setCustomItemError(null);
+    try {
+      const updated = await addCustomItemImages(itemId, files, bboxes);
+      if (!mountedRef.current) return null;
+      setCustomItems((prev) =>
+        prev.map((item) => (item.id === updated.id ? updated : item))
+      );
+      return updated;
+    } catch (err) {
+      if (mountedRef.current) {
+        setCustomItemError(err.message || "Failed to add reference photo.");
+      }
+      throw err;
+    } finally {
+      if (mountedRef.current) {
+        setIsUploadingCustom(false);
+      }
+    }
+  }, []);
+
+  const removeCustomItem = useCallback(async (itemId) => {
+    setCustomItemError(null);
+    try {
+      await deleteCustomItem(itemId);
+      if (!mountedRef.current) return;
+      setCustomItems((prev) => prev.filter((item) => item.id !== itemId));
+      setSelectedCustomIds((prev) => prev.filter((id) => id !== itemId));
+    } catch (err) {
+      if (mountedRef.current) {
+        setCustomItemError(err.message || "Failed to delete custom item.");
+      }
+    }
+  }, []);
+
+  const toggleCustomItem = useCallback((itemId) => {
+    setSelectedCustomIds((prev) =>
+      prev.includes(itemId) ? prev.filter((id) => id !== itemId) : [...prev, itemId]
+    );
+  }, []);
+
+  const captureLiveSnapshotFile = useCallback(async () => {
+    const videoEl = videoRef.current;
+    if (
+      !videoEl ||
+      videoEl.readyState < 2 ||
+      videoEl.videoWidth <= 0 ||
+      videoEl.videoHeight <= 0
+    ) {
+      throw new Error("Start the camera first to capture a live snapshot.");
+    }
+    const snapCanvas = document.createElement("canvas");
+    snapCanvas.width = videoEl.videoWidth;
+    snapCanvas.height = videoEl.videoHeight;
+    const ctx = snapCanvas.getContext("2d");
+    if (!ctx) {
+      throw new Error("Failed to capture frame from webcam.");
+    }
+    ctx.drawImage(videoEl, 0, 0, snapCanvas.width, snapCanvas.height);
+    const blob = await canvasToJpegBlob(snapCanvas, 0.9);
+    return new File([blob], `webcam_ref_${Date.now()}.jpg`, { type: "image/jpeg" });
+  }, []);
 
   // Stop webcam tracks cleanly
   const stopCamera = useCallback(() => {
@@ -307,8 +434,11 @@ export function useWebcamDetection() {
       return;
     }
 
-    // Option A: If no classes are selected, detection is inactive (0 detections)
-    if (selectedClassesRef.current.length === 0) {
+    // Option A: If neither COCO classes nor custom reference items are selected, detection is inactive (0 detections)
+    if (
+      selectedClassesRef.current.length === 0 &&
+      selectedCustomIdsRef.current.length === 0
+    ) {
       setDetections([]);
       setDetectionCount(0);
       setInferenceTimeMs(null);
@@ -354,7 +484,9 @@ export function useWebcamDetection() {
         frameBlob,
         confidenceRef.current,
         selectedClassesRef.current,
-        controller.signal
+        controller.signal,
+        selectedCustomIdsRef.current,
+        similarityThresholdRef.current
       );
 
       const rttMs = Math.round(performance.now() - requestStart);
@@ -372,11 +504,14 @@ export function useWebcamDetection() {
       });
 
       const rawDetections = Array.isArray(result.detections) ? result.detections : [];
-      const currentSelected = selectedClassesRef.current;
-      const filteredDetections =
-        Array.isArray(currentSelected) && currentSelected.length > 0
-          ? rawDetections.filter((d) => currentSelected.includes(d.label))
-          : rawDetections;
+      const currentSelectedClasses = selectedClassesRef.current;
+      const currentSelectedCustom = selectedCustomIdsRef.current;
+      const filteredDetections = rawDetections.filter((d) => {
+        if (d.is_custom) {
+          return currentSelectedCustom.includes(d.custom_item_id);
+        }
+        return currentSelectedClasses.includes(d.label);
+      });
 
       setDetections(filteredDetections);
       setDetectionCount(filteredDetections.length);
@@ -456,6 +591,18 @@ export function useWebcamDetection() {
     supportedClasses,
     selectedClasses,
     setSelectedClasses,
+    customItems,
+    selectedCustomIds,
+    similarityThreshold,
+    setSimilarityThreshold,
+    isUploadingCustom,
+    customItemError,
+    setCustomItemError,
+    uploadCustomItem,
+    addImagesToCustomItem,
+    removeCustomItem,
+    toggleCustomItem,
+    captureLiveSnapshotFile,
     startCamera,
     stopCamera,
     pauseDetection,

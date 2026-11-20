@@ -35,12 +35,31 @@ export function App() {
     supportedClasses,
     selectedClasses,
     setSelectedClasses,
+    customItems,
+    selectedCustomIds,
+    similarityThreshold,
+    setSimilarityThreshold,
+    isUploadingCustom,
+    customItemError,
+    setCustomItemError,
+    uploadCustomItem,
+    addImagesToCustomItem,
+    removeCustomItem,
+    toggleCustomItem,
+    captureLiveSnapshotFile,
     startCamera,
     stopCamera,
     toggleDetection,
     checkBackendHealth,
     handleVideoMetadataLoaded,
   } = useWebcamDetection();
+
+  const activeMonitoredNames = [
+    ...selectedClasses,
+    ...customItems
+      .filter((item) => selectedCustomIds.includes(item.id))
+      .map((item) => item.name),
+  ];
 
   const {
     activeTracksMap,
@@ -82,6 +101,7 @@ export function App() {
     movementEvents,
     activeTracksMap,
     lastUpdatedAt,
+    selectedClasses: activeMonitoredNames,
   });
 
   // Intercept camera stop to freeze session metrics before scene resets
@@ -196,6 +216,19 @@ export function App() {
             selectedClasses={selectedClasses}
             onSelectClasses={setSelectedClasses}
             detectionCount={detectionCount}
+            customItems={customItems}
+            selectedCustomIds={selectedCustomIds}
+            onToggleCustomItem={toggleCustomItem}
+            onUploadCustomItem={uploadCustomItem}
+            onAddCustomItemImages={addImagesToCustomItem}
+            onDeleteCustomItem={removeCustomItem}
+            similarityThreshold={similarityThreshold}
+            onSimilarityChange={setSimilarityThreshold}
+            isUploadingCustom={isUploadingCustom}
+            customItemError={customItemError}
+            onClearCustomError={setCustomItemError}
+            cameraStatus={cameraStatus}
+            onCaptureLiveSnapshot={captureLiveSnapshotFile}
           />
         </div>
       </main>

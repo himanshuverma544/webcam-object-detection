@@ -23,6 +23,7 @@ export function useSessionMetrics({
   movementEvents,
   activeTracksMap,
   lastUpdatedAt,
+  selectedClasses,
 }) {
   const [completedMetrics, setCompletedMetrics] = useState(null);
 
@@ -198,6 +199,9 @@ export function useSessionMetrics({
 
     const metricsSnapshot = {
       timestamp: new Date().toLocaleString(),
+      sessionStartMs: sessionStartRef.current,
+      sessionEndMs: sessionEndTime,
+      selectedClasses: Array.isArray(selectedClasses) ? [...selectedClasses] : [],
       durationMs,
       durationFormatted: formatDuration(durationMs),
       guardedMs,
@@ -224,6 +228,8 @@ export function useSessionMetrics({
       movementEventsCount: movementEventsList.length,
       mostActiveObject,
       stabilityRatio,
+      movementEvents: movementEventsList,
+      missingEvents: missingEventsList,
     };
 
     setCompletedMetrics(metricsSnapshot);
@@ -236,6 +242,7 @@ export function useSessionMetrics({
     missingEvents,
     movementEvents,
     activeTracksMap,
+    selectedClasses,
   ]);
 
   return {

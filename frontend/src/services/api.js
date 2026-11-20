@@ -1,4 +1,9 @@
-const rawBaseUrl = import.meta.env.VITE_API_BASE_URL || "http://127.0.0.1:8000";
+const rawBaseUrl =
+  import.meta.env.VITE_API_BASE_URL !== undefined
+    ? import.meta.env.VITE_API_BASE_URL
+    : import.meta.env.DEV
+      ? "http://127.0.0.1:8000"
+      : "";
 
 // Ensure no trailing slashes and auto-upgrade http to https if loaded over HTTPS (prevents Mixed Content errors)
 let normalizedUrl = (rawBaseUrl || "").trim().replace(/\/+$/, "");
@@ -97,7 +102,14 @@ export async function fetchClasses(signal) {
  * @param {string[]|null|AbortSignal} [classes] - Optional array of selected COCO class names or IDs
  * @param {AbortSignal} [signal]
  */
-export async function detectObjects(imageBlob, confidence = 0.35, classes = null, signal) {
+export async function detectObjects(
+  imageBlob,
+  confidence = 0.35,
+  classes = null,
+  signal,
+  customItemIds = null,
+  similarityThreshold = null
+) {
   let activeClasses = classes;
   let activeSignal = signal;
   if (classes && (classes instanceof AbortSignal || typeof classes.aborted === "boolean")) {
@@ -113,8 +125,22 @@ export async function detectObjects(imageBlob, confidence = 0.35, classes = null
     clampedConfidence.toFixed(2)
   )}`;
 
-  if (Array.isArray(activeClasses) && activeClasses.length > 0) {
+  const hasCustom = Array.isArray(customItemIds) && customItemIds.length > 0;
+  const hasCoco = Array.isArray(activeClasses) && activeClasses.length > 0;
+
+  if (hasCoco) {
     url += `&classes=${encodeURIComponent(activeClasses.join(","))}`;
+  } else if (hasCustom) {
+    // Explicitly signal 0 COCO classes so backend skips YOLO11n and runs custom YOLOE only
+    url += `&classes=`;
+  }
+
+  if (hasCustom) {
+    url += `&custom_items=${encodeURIComponent(customItemIds.join(","))}`;
+    if (typeof similarityThreshold === "number" && !Number.isNaN(similarityThreshold)) {
+      const clampedSim = Math.min(1.0, Math.max(0.1, similarityThreshold));
+      url += `&similarity_threshold=${encodeURIComponent(clampedSim.toFixed(2))}`;
+    }
   }
 
   let response;
@@ -192,6 +218,172 @@ export async function sendMetricsEmail(
     });
   } catch (err) {
     if (err.name === "AbortError") throw err;
+    throw new ApiError(
+      `Cannot reach backend at ${API_BASE_URL}. Ensure the server is running.`,
+      0
+    );
+  }
+
+  if (!response.ok) {
+    const detail = await parseErrorMessage(response);
+    throw new ApiError(detail, response.status);
+  }
+
+  return response.json();
+}
+
+
+/**
+ * Fetch all saved custom visual-prompt reference items.
+ * @param {AbortSignal} [signal]
+ */
+export async function fetchCustomItems(signal) {
+  let response;
+  try {
+    response = await fetch(`${API_BASE_URL}/custom-items`, {
+      method: "GET",
+      headers: { Accept: "application/json" },
+      signal,
+    });
+  } catch (err) {
+    if (err.name === "AbortError") throw err;
+    throw new ApiError(
+      `Cannot reach backend at ${API_BASE_URL}. Ensure the server is running.`,
+      0
+    );
+  }
+
+  if (!response.ok) {
+    const detail = await parseErrorMessage(response);
+    throw new ApiError(detail, response.status);
+  }
+
+  return response.json();
+}
+
+/**
+ * Auto-detect a tight foreground bounding box around the main object in a photo.
+ * @param {File|Blob} file
+ */
+export async function autoBoxCustomImage(file) {
+  const formData = new FormData();
+  const filename = file instanceof File && file.name ? file.name : "ref.jpg";
+  formData.append("file", file, filename);
+
+  let response;
+  try {
+    response = await fetch(`${API_BASE_URL}/custom-items/auto-box`, {
+      method: "POST",
+      body: formData,
+    });
+  } catch (err) {
+    throw new ApiError(
+      `Cannot reach backend at ${API_BASE_URL}. Ensure the server is running.`,
+      0
+    );
+  }
+
+  if (!response.ok) {
+    const detail = await parseErrorMessage(response);
+    throw new ApiError(detail, response.status);
+  }
+
+  return response.json();
+}
+
+/**
+ * Register a new custom reference item from 1-5 image files with optional tight foreground boxes.
+ * @param {string} name
+ * @param {Array<File|Blob>} files
+ * @param {Array<Array<number>>} [bboxes] - Normalized [x1, y1, x2, y2] boxes matching files
+ */
+export async function createCustomItem(name, files, bboxes = null) {
+  const formData = new FormData();
+  formData.append("name", name.trim());
+  files.forEach((f, idx) => {
+    const filename = f instanceof File && f.name ? f.name : `ref_${idx + 1}.jpg`;
+    formData.append("files", f, filename);
+  });
+  if (Array.isArray(bboxes) && bboxes.length > 0) {
+    formData.append("bboxes", JSON.stringify(bboxes));
+  }
+
+  let response;
+  try {
+    response = await fetch(`${API_BASE_URL}/custom-items`, {
+      method: "POST",
+      body: formData,
+    });
+  } catch (err) {
+    throw new ApiError(
+      `Cannot reach backend at ${API_BASE_URL}. Ensure the server is running.`,
+      0
+    );
+  }
+
+  if (!response.ok) {
+    const detail = await parseErrorMessage(response);
+    throw new ApiError(detail, response.status);
+  }
+
+  return response.json();
+}
+
+/**
+ * Add extra reference angle photos (with optional tight boxes) to an existing custom item.
+ * @param {string} itemId
+ * @param {Array<File|Blob>} files
+ * @param {Array<Array<number>>} [bboxes]
+ */
+export async function addCustomItemImages(itemId, files, bboxes = null) {
+  const formData = new FormData();
+  files.forEach((f, idx) => {
+    const filename = f instanceof File && f.name ? f.name : `angle_${idx + 1}.jpg`;
+    formData.append("files", f, filename);
+  });
+  if (Array.isArray(bboxes) && bboxes.length > 0) {
+    formData.append("bboxes", JSON.stringify(bboxes));
+  }
+
+  let response;
+  try {
+    response = await fetch(
+      `${API_BASE_URL}/custom-items/${encodeURIComponent(itemId)}/images`,
+      {
+        method: "POST",
+        body: formData,
+      }
+    );
+  } catch (err) {
+    throw new ApiError(
+      `Cannot reach backend at ${API_BASE_URL}. Ensure the server is running.`,
+      0
+    );
+  }
+
+  if (!response.ok) {
+    const detail = await parseErrorMessage(response);
+    throw new ApiError(detail, response.status);
+  }
+
+  return response.json();
+}
+
+/**
+ * Delete a saved custom reference item by ID.
+ * @param {string} itemId
+ */
+export async function deleteCustomItem(itemId) {
+  let response;
+  try {
+    response = await fetch(
+      `${API_BASE_URL}/custom-items/${encodeURIComponent(itemId)}`,
+      {
+        method: "DELETE",
+        headers: { Accept: "application/json" },
+      }
+    );
+  } catch (err) {
     throw new ApiError(
       `Cannot reach backend at ${API_BASE_URL}. Ensure the server is running.`,
       0

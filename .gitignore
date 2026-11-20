@@ -15,6 +15,9 @@ htmlcov/
 *.pt
 *.onnx
 
+# User-uploaded custom reference items
+backend/data/custom_items/
+
 # Environment variables
 .env
 .env.local
