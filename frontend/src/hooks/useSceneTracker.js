@@ -186,7 +186,7 @@ export function useSceneTracker() {
           path: [{ x: d.cx, y: d.cy, timestamp: now }],
           settleStart: null,
           lastSeen: now,
-          isGuarded: isGuardedRef.current,
+          isGuarded: false, // Baseline snapshot only: objects entering after arming are not guarded
           isFlashing: false,
           missingSince: null,
           lastBbox: [...d.bbox],
@@ -314,7 +314,7 @@ export function useSceneTracker() {
       if (track.state !== "MISSING") {
         const isEligible =
           track.isGuarded ||
-          (track.origin && now - track.origin.timestamp >= AUTO_STATIONARY_MIN_MS);
+          (!isGuardedRef.current && track.origin && now - track.origin.timestamp >= AUTO_STATIONARY_MIN_MS);
 
         if (isEligible && unseenMs >= GRACE_PERIOD_MS) {
           // CONFIRMED MISSING!
@@ -333,6 +333,9 @@ export function useSceneTracker() {
             isGuarded: track.isGuarded,
           });
           audioCue = "missing";
+        } else if (!track.isGuarded && unseenMs >= GRACE_PERIOD_MS) {
+          // Non-guarded item left scene while armed: cleanly remove track
+          tracksMap.delete(id);
         }
       } else {
         // Already missing: prune if absent for too long and not guarded

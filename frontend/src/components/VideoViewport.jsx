@@ -622,7 +622,8 @@ export function VideoViewport({
         : det.track_id !== undefined && det.track_id !== null
         ? `#${det.track_id} `
         : "";
-      const guardPrefix = isGuarded ? "[GUARD] " : "";
+      const isTrackGuarded = Boolean(trackInfo?.isGuarded);
+      const guardPrefix = isTrackGuarded ? "[GUARD] " : "";
       const customPrefix = det.is_custom ? "[MY ITEM] " : "";
       const statusText = isFlashing ? " [Moved]" : isMoving ? " [Moving]" : "";
       const labelText = `${guardPrefix}${customPrefix}${trackIdText}${det.label} ${scoreText}${statusText}`;
