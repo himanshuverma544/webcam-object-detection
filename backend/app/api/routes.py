@@ -17,6 +17,7 @@ from fastapi import (
 )
 
 from app.core.config import Settings, get_settings
+from app.schemas.chat import ChatAction, ChatMessage, ChatRequest, ChatResponse
 from app.schemas.detection import (
     AutoBoxResponse,
     ClassesResponse,
@@ -31,6 +32,7 @@ from app.schemas.detection import (
     ImageDimensions,
     ResetTrackResponse,
 )
+from app.services.chat_service import call_gemini_api, local_intent_fallback
 from app.services.custom_detector import (
     CustomObjectDetector,
     _decode_bgr_image,
@@ -626,3 +628,133 @@ async def delete_custom_item(
         message="Custom reference item deleted",
         deleted_id=item_id,
     )
+
+
+@router.post(
+    "/chat",
+    response_model=ChatResponse,
+    summary="AI Copilot natural language command and control endpoint",
+)
+async def chat_copilot(
+    request: Request,
+    settings: Settings = Depends(get_settings),
+    custom_detector: CustomObjectDetector = Depends(get_custom_detector),
+) -> ChatResponse:
+    """Process natural language instructions from the user to control the application."""
+    content_type = (request.headers.get("content-type") or "").lower()
+
+    uploaded_file_bytes: Optional[bytes] = None
+    uploaded_file_mime: Optional[str] = None
+    uploaded_file_name: Optional[str] = None
+    message_text = ""
+    history: List[ChatMessage] = []
+    current_state: Dict[str, Any] = {}
+
+    if "multipart/form-data" in content_type:
+        form = await request.form()
+        message_text = str(form.get("message") or "").strip()
+        raw_file = form.get("file")
+        if isinstance(raw_file, UploadFile):
+            uploaded_file_mime = raw_file.content_type
+            uploaded_file_name = raw_file.filename
+            uploaded_file_bytes = await raw_file.read()
+            await raw_file.close()
+
+        raw_history = form.get("history")
+        if raw_history and str(raw_history).strip():
+            try:
+                parsed_hist = json.loads(str(raw_history))
+                if isinstance(parsed_hist, list):
+                    history = [ChatMessage.model_validate(m) for m in parsed_hist]
+            except Exception:
+                pass
+
+        raw_state = form.get("current_state")
+        if raw_state and str(raw_state).strip():
+            try:
+                current_state = json.loads(str(raw_state))
+            except Exception:
+                pass
+    else:
+        try:
+            body = await request.json()
+            chat_req = ChatRequest.model_validate(body)
+            message_text = chat_req.message
+            history = chat_req.history
+            current_state = chat_req.current_state or {}
+        except Exception as exc:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Invalid JSON chat request: {exc}",
+            )
+
+    if not message_text and not uploaded_file_bytes:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Prompt message or attached image is required.",
+        )
+
+    # Check if an image is uploaded for creating/adding a custom item
+    if uploaded_file_bytes:
+        import re
+
+        clean_prompt = message_text.lower()
+        is_custom_intent = (
+            any(w in clean_prompt for w in ["item", "custom", "save", "add", "register", "reference", "my"])
+            or not message_text.strip()
+        )
+        if is_custom_intent:
+            extracted_name = ""
+            name_match = re.search(
+                r"\b(?:name[d]?|called|as|for)\s+['\"]?([a-zA-Z0-9 _-]+)['\"]?",
+                message_text,
+                re.IGNORECASE,
+            )
+            if name_match:
+                extracted_name = name_match.group(1).strip()
+            if not extracted_name and uploaded_file_name:
+                extracted_name = re.sub(r"\.[^.]+$", "", uploaded_file_name).replace("_", " ").replace("-", " ").strip()
+            if not extracted_name:
+                extracted_name = "Custom Item"
+
+            try:
+                auto_box = auto_detect_foreground_bbox(uploaded_file_bytes)
+                bboxes_norm = [auto_box.bbox_norm]
+            except Exception:
+                bboxes_norm = None
+
+            try:
+                created_item = custom_detector.add_item(
+                    name=extracted_name.title(),
+                    image_bytes_list=[uploaded_file_bytes],
+                    bboxes_norm=bboxes_norm,
+                )
+                return ChatResponse(
+                    reply=f"Successfully registered custom reference item **'{created_item.name}'** with auto-detected foreground bounding box! Detection has been enabled for it.",
+                    actions=[
+                        ChatAction(
+                            type="CREATE_CUSTOM_ITEM",
+                            payload={"item": created_item.model_dump()},
+                            summary=f"Created '{created_item.name}'",
+                        ),
+                        ChatAction(
+                            type="TOGGLE_CUSTOM_ITEM",
+                            payload={"item_ref": created_item.id, "enable": True},
+                            summary=f"Enabled '{created_item.name}'",
+                        ),
+                    ],
+                    action_summaries=[f"Created '{created_item.name}'", f"Enabled '{created_item.name}'"],
+                    used_model="custom_item_indexer",
+                )
+            except Exception as exc:
+                logger.warning("Failed to auto-index uploaded custom item: %s", exc)
+
+    return await call_gemini_api(
+        message=message_text,
+        history=history,
+        current_state=current_state,
+        settings=settings,
+        image_bytes=uploaded_file_bytes,
+        image_mime_type=uploaded_file_mime,
+    )
+

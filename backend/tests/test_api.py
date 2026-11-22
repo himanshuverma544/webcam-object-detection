@@ -659,6 +659,53 @@ def test_auto_box_endpoint_and_custom_bboxes_form(
     assert fake.last_bboxes == [[0.23, 0.32, 0.78, 0.71]]
 
 
+def test_chat_endpoint_camera_and_confidence(client: TestClient) -> None:
+    """POST /chat correctly processes camera and confidence tuning commands."""
+    res = client.post("/chat", json={"message": "start the camera and set confidence to 70%"})
+    assert res.status_code == 200
+    data = res.json()
+    action_types = [a["type"] for a in data["actions"]]
+    assert "START_CAMERA" in action_types
+    assert "SET_CONFIDENCE" in action_types
+    conf_act = next(a for a in data["actions"] if a["type"] == "SET_CONFIDENCE")
+    assert round(conf_act["payload"]["value"], 2) == 0.70
+
+
+def test_chat_endpoint_coco_classes(client: TestClient) -> None:
+    """POST /chat filters COCO classes, selects all, and clears classes."""
+    res1 = client.post("/chat", json={"message": "only detect people, cups, and cell phones"})
+    assert res1.status_code == 200
+    act1 = res1.json()["actions"][0]
+    assert act1["type"] == "SET_COCO_CLASSES"
+    assert "person" in act1["payload"]["classes"]
+    assert "cup" in act1["payload"]["classes"]
+    assert "cell phone" in act1["payload"]["classes"]
+
+    res_all = client.post("/chat", json={"message": "enable all classes"})
+    assert res_all.status_code == 200
+    act_all = res_all.json()["actions"][0]
+    assert act_all["payload"]["mode"] == "select_all"
+    assert len(act_all["payload"]["classes"]) == 80
+
+    res_clear = client.post("/chat", json={"message": "clear all classes"})
+    assert res_clear.status_code == 200
+    act_clear = res_clear.json()["actions"][0]
+    assert act_clear["payload"]["mode"] == "clear_all"
+    assert len(act_clear["payload"]["classes"]) == 0
+
+
+def test_chat_endpoint_guard_and_metrics(client: TestClient) -> None:
+    """POST /chat correctly handles scene guarding and metrics."""
+    res_guard = client.post("/chat", json={"message": "guard the scene right now"})
+    assert res_guard.status_code == 200
+    assert any(a["type"] == "GUARD_SCENE" and a["payload"]["arm"] is True for a in res_guard.json()["actions"])
+
+    res_metrics = client.post("/chat", json={"message": "show session metrics summary"})
+    assert res_metrics.status_code == 200
+    assert any(a["type"] == "SHOW_METRICS" for a in res_metrics.json()["actions"])
+
+
+
 
 
 

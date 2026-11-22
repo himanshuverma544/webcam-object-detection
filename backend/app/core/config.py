@@ -72,6 +72,10 @@ class Settings(BaseSettings):
         alias="DEFAULT_RECIPIENT_EMAIL",
     )
 
+    # Gemini API Settings
+    gemini_api_key: Optional[str] = Field(default=None, alias="GEMINI_API_KEY")
+    gemini_model: str = Field(default="gemini-3.1-flash-lite", alias="GEMINI_MODEL")
+
     # SMTP / Fallback Email Settings
     smtp_host: str = Field(default="smtp.gmail.com", alias="SMTP_HOST")
     smtp_port: int = Field(default=587, alias="SMTP_PORT")
@@ -98,6 +102,8 @@ class Settings(BaseSettings):
         }
 
 
-@lru_cache()
 def get_settings() -> Settings:
+    """Return fresh settings loaded from environment and .env file."""
+    from dotenv import load_dotenv
+    load_dotenv(override=True)
     return Settings()

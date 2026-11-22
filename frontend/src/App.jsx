@@ -1,4 +1,5 @@
 import React, { useCallback, useEffect, useState } from "react";
+import { ChatCopilot } from "./components/ChatCopilot";
 import { ControlPanel } from "./components/ControlPanel";
 import { DetectionList } from "./components/DetectionList";
 import { Header } from "./components/Header";
@@ -8,7 +9,7 @@ import { VideoViewport } from "./components/VideoViewport";
 import { useSceneTracker } from "./hooks/useSceneTracker";
 import { useSessionMetrics } from "./hooks/useSessionMetrics";
 import { useWebcamDetection } from "./hooks/useWebcamDetection";
-import { API_BASE_URL } from "./services/api";
+import { API_BASE_URL, resetTrack, sendMetricsEmail } from "./services/api";
 import "./App.css";
 
 export function App() {
@@ -46,6 +47,7 @@ export function App() {
     addImagesToCustomItem,
     removeCustomItem,
     toggleCustomItem,
+    refreshCustomItems,
     captureLiveSnapshotFile,
     startCamera,
     stopCamera,
@@ -123,6 +125,202 @@ export function App() {
       resetScene();
     }
   }, [cameraStatus, resetScene]);
+
+  // Execute structured AI Copilot action commands on the UI
+  const handleExecuteCopilotActions = useCallback(
+    (actions) => {
+      if (!Array.isArray(actions)) return;
+
+      for (const action of actions) {
+        if (!action || !action.type) continue;
+        const payload = action.payload || {};
+
+        switch (action.type) {
+          case "START_CAMERA":
+            startCamera();
+            break;
+
+          case "STOP_CAMERA":
+            handleStopCamera();
+            break;
+
+          case "TOGGLE_DETECTION": {
+            const act = payload.action;
+            if (act === "pause" && isDetecting) {
+              toggleDetection();
+            } else if (act === "resume" && !isDetecting) {
+              toggleDetection();
+            } else if (!act || act === "toggle") {
+              toggleDetection();
+            }
+            break;
+          }
+
+          case "SET_CONFIDENCE":
+            if (typeof payload.value === "number") {
+              setConfidence(payload.value);
+            }
+            break;
+
+          case "SET_FRAME_CADENCE":
+            if (typeof payload.interval_ms === "number") {
+              setCaptureIntervalMs(payload.interval_ms);
+            }
+            break;
+
+          case "SET_MIN_MOVE_DISTANCE":
+            if (typeof payload.distance_px === "number") {
+              setMinMoveDistance(payload.distance_px);
+            }
+            break;
+
+          case "SET_SETTLE_DWELL_TIME":
+            if (typeof payload.dwell_ms === "number") {
+              setSettleDwellTimeMs(payload.dwell_ms);
+            }
+            break;
+
+          case "SET_COCO_CLASSES": {
+            const { mode = "replace", classes: targetClasses = [] } = payload;
+            if (mode === "select_all") {
+              setSelectedClasses(
+                supportedClasses.length > 0 ? [...supportedClasses] : [...targetClasses]
+              );
+            } else if (mode === "clear_all") {
+              setSelectedClasses([]);
+            } else if (mode === "add") {
+              setSelectedClasses((prev) => Array.from(new Set([...prev, ...targetClasses])));
+            } else if (mode === "remove") {
+              setSelectedClasses((prev) => prev.filter((c) => !targetClasses.includes(c)));
+            } else {
+              setSelectedClasses([...targetClasses]);
+            }
+            break;
+          }
+
+          case "TOGGLE_CUSTOM_ITEM": {
+            const itemRef = String(payload.item_ref || "").toLowerCase();
+            const enable = payload.enable;
+            const target = customItems.find(
+              (it) => it.id === itemRef || it.name.toLowerCase() === itemRef
+            );
+            if (target) {
+              if (enable === true && !selectedCustomIds.includes(target.id)) {
+                toggleCustomItem(target.id);
+              } else if (enable === false && selectedCustomIds.includes(target.id)) {
+                toggleCustomItem(target.id);
+              } else if (enable === undefined) {
+                toggleCustomItem(target.id);
+              }
+            }
+            break;
+          }
+
+          case "DELETE_CUSTOM_ITEM": {
+            const itemRef = String(payload.item_ref || "").toLowerCase();
+            const target = customItems.find(
+              (it) => it.id === itemRef || it.name.toLowerCase() === itemRef
+            );
+            if (target) {
+              removeCustomItem(target.id);
+            }
+            break;
+          }
+
+          case "SET_SIMILARITY_THRESHOLD":
+            if (typeof payload.value === "number") {
+              setSimilarityThreshold(payload.value);
+            }
+            break;
+
+          case "CAPTURE_CUSTOM_ITEM": {
+            const itemName = payload.name || "Custom Item";
+            if (cameraStatus === "active") {
+              captureLiveSnapshotFile(itemName).then((file) => {
+                if (file) {
+                  uploadCustomItem(itemName, [file], null);
+                }
+              });
+            } else {
+              startCamera();
+              setTimeout(() => {
+                captureLiveSnapshotFile(itemName).then((file) => {
+                  if (file) {
+                    uploadCustomItem(itemName, [file], null);
+                  }
+                });
+              }, 1200);
+            }
+            break;
+          }
+
+          case "CREATE_CUSTOM_ITEM":
+            refreshCustomItems();
+            break;
+
+          case "GUARD_SCENE": {
+            const shouldArm = payload.arm;
+            if (shouldArm !== undefined && shouldArm !== isGuarded) {
+              toggleGuard();
+            }
+            break;
+          }
+
+          case "DISMISS_MISSING_ALERT": {
+            const label = payload.label;
+            if (label) {
+              dismissMissingItem(label);
+            }
+            break;
+          }
+
+          case "SHOW_METRICS":
+            setIsMetricsModalOpen(true);
+            break;
+
+          case "SEND_METRICS_EMAIL":
+            if (completedMetrics) {
+              sendMetricsEmail(completedMetrics, payload.recipient_email);
+            }
+            break;
+
+          case "RESET_TRACKER":
+            resetScene();
+            resetTrack();
+            break;
+
+          default:
+            break;
+        }
+      }
+    },
+    [
+      startCamera,
+      handleStopCamera,
+      isDetecting,
+      toggleDetection,
+      setConfidence,
+      setCaptureIntervalMs,
+      setMinMoveDistance,
+      setSettleDwellTimeMs,
+      supportedClasses,
+      setSelectedClasses,
+      customItems,
+      selectedCustomIds,
+      toggleCustomItem,
+      removeCustomItem,
+      setSimilarityThreshold,
+      cameraStatus,
+      captureLiveSnapshotFile,
+      uploadCustomItem,
+      refreshCustomItems,
+      isGuarded,
+      toggleGuard,
+      dismissMissingItem,
+      completedMetrics,
+      resetScene,
+    ]
+  );
 
   return (
     <div className="app-shell">
@@ -237,6 +435,19 @@ export function App() {
         isOpen={isMetricsModalOpen}
         onClose={() => setIsMetricsModalOpen(false)}
         metrics={completedMetrics}
+      />
+
+      <ChatCopilot
+        cameraStatus={cameraStatus}
+        isDetecting={isDetecting}
+        confidence={confidence}
+        selectedClasses={selectedClasses}
+        customItems={customItems}
+        selectedCustomIds={selectedCustomIds}
+        isGuarded={isGuarded}
+        supportedClasses={supportedClasses}
+        onExecuteActions={handleExecuteCopilotActions}
+        onCaptureLiveSnapshot={captureLiveSnapshotFile}
       />
     </div>
   );

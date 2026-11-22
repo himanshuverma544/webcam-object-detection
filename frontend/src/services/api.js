@@ -397,3 +397,68 @@ export async function deleteCustomItem(itemId) {
 
   return response.json();
 }
+
+/**
+ * Send a chat instruction or multimodal message to the AI Copilot.
+ * @param {Object} options
+ * @param {string} options.message - Natural language command
+ * @param {Array} [options.history] - Prior messages [{ role, content }]
+ * @param {Object} [options.currentState] - Current UI state
+ * @param {File|Blob|null} [options.file] - Optional uploaded photo
+ * @param {AbortSignal} [options.signal]
+ */
+export async function sendChatMessage({
+  message,
+  history = [],
+  currentState = {},
+  file = null,
+  signal,
+}) {
+  let response;
+  try {
+    if (file) {
+      const formData = new FormData();
+      formData.append("message", message || "");
+      formData.append("file", file, file.name || "upload.jpg");
+      if (history && history.length > 0) {
+        formData.append("history", JSON.stringify(history));
+      }
+      if (currentState && Object.keys(currentState).length > 0) {
+        formData.append("current_state", JSON.stringify(currentState));
+      }
+
+      response = await fetch(`${API_BASE_URL}/chat`, {
+        method: "POST",
+        body: formData,
+        signal,
+      });
+    } else {
+      response = await fetch(`${API_BASE_URL}/chat`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Accept: "application/json",
+        },
+        body: JSON.stringify({
+          message,
+          history,
+          current_state: currentState,
+        }),
+        signal,
+      });
+    }
+  } catch (err) {
+    if (err.name === "AbortError") throw err;
+    throw new ApiError(
+      `Cannot reach AI Copilot backend at ${API_BASE_URL}. Ensure the server is running.`,
+      0
+    );
+  }
+
+  if (!response.ok) {
+    const detail = await parseErrorMessage(response);
+    throw new ApiError(detail, response.status);
+  }
+
+  return response.json();
+}

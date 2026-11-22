@@ -602,6 +602,7 @@ export function useWebcamDetection() {
     addImagesToCustomItem,
     removeCustomItem,
     toggleCustomItem,
+    refreshCustomItems,
     captureLiveSnapshotFile,
     startCamera,
     stopCamera,
