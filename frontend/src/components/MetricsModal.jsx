@@ -5,9 +5,9 @@ import { generateExecutiveSummary } from "../utils/summaryGenerator";
 
 const DEFAULT_RECIPIENT = (import.meta.env.VITE_DEFAULT_RECIPIENT_EMAIL || "").trim();
 
-export function MetricsModal({ isOpen, onClose, metrics }) {
+export function MetricsModal({ isOpen, onClose, metrics, activeTab = "metrics", isCopiedExternal = 0 }) {
   const [copied, setCopied] = useState(false);
-  const [viewMode, setViewMode] = useState("metrics"); // 'metrics' | 'summary'
+  const [viewMode, setViewMode] = useState(activeTab || "metrics"); // 'metrics' | 'summary'
   const [emailStatus, setEmailStatus] = useState("idle"); // 'idle' | 'sending' | 'success' | 'error'
   const [emailMessage, setEmailMessage] = useState("");
 
@@ -23,15 +23,24 @@ export function MetricsModal({ isOpen, onClose, metrics }) {
     return () => window.removeEventListener("keydown", handleKeyDown);
   }, [isOpen, onClose]);
 
-  // Reset status when opened
+  // Sync active tab and reset status when opened or activeTab switches
   useEffect(() => {
     if (isOpen) {
       setEmailStatus("idle");
       setEmailMessage("");
       setCopied(false);
-      setViewMode("metrics");
+      setViewMode(activeTab || "metrics");
     }
-  }, [isOpen]);
+  }, [isOpen, activeTab]);
+
+  // Flash copied state when triggered externally (e.g. via AI Copilot)
+  useEffect(() => {
+    if (isCopiedExternal) {
+      setCopied(true);
+      const timer = setTimeout(() => setCopied(false), 2000);
+      return () => clearTimeout(timer);
+    }
+  }, [isCopiedExternal]);
 
   const summaryText = useMemo(() => {
     return metrics ? generateExecutiveSummary(metrics) : "";

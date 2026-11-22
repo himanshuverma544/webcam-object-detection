@@ -72,24 +72,27 @@ function normalizeImageFile(file) {
   });
 }
 
-export function DetectionList({
-  supportedClasses = [],
-  selectedClasses = [],
-  onSelectClasses,
-  customItems = [],
-  selectedCustomIds = [],
-  onToggleCustomItem,
-  onUploadCustomItem,
-  onAddCustomItemImages,
-  onDeleteCustomItem,
-  similarityThreshold = 0.65,
-  onSimilarityChange,
-  isUploadingCustom = false,
-  customItemError = null,
-  onClearCustomError,
-  cameraStatus = "idle",
-  onCaptureLiveSnapshot,
-}) {
+export const DetectionList = React.forwardRef(function DetectionList(
+  {
+    supportedClasses = [],
+    selectedClasses = [],
+    onSelectClasses,
+    customItems = [],
+    selectedCustomIds = [],
+    onToggleCustomItem,
+    onUploadCustomItem,
+    onAddCustomItemImages,
+    onDeleteCustomItem,
+    similarityThreshold = 0.65,
+    onSimilarityChange,
+    isUploadingCustom = false,
+    customItemError = null,
+    onClearCustomError,
+    cameraStatus = "idle",
+    onCaptureLiveSnapshot,
+  },
+  ref
+) {
   const [activeTab, setActiveTab] = useState("coco"); // 'coco' | 'custom'
   const [searchQuery, setSearchQuery] = useState("");
 
@@ -102,6 +105,26 @@ export function DetectionList({
   const fileInputRef = useRef(null);
   const addAngleInputRef = useRef(null);
   const addAngleTargetIdRef = useRef(null);
+
+  React.useImperativeHandle(ref, () => ({
+    stageCopilotCapture: async ({ name, file, onComplete, onCancel }) => {
+      setActiveTab("custom");
+      setLocalFormError(null);
+      if (onClearCustomError) onClearCustomError(null);
+
+      const normalized = await normalizeImageFile(file);
+      const previewUrl = URL.createObjectURL(normalized);
+
+      setBoxModalState({
+        mode: "copilotStage",
+        name,
+        items: [{ file: normalized, previewUrl }],
+        onComplete,
+        onCancel,
+      });
+    },
+    isCropModalOpen: () => Boolean(boxModalState),
+  }));
 
   // Revoke object URLs on unmount
   useEffect(() => {
@@ -192,8 +215,13 @@ export function DetectionList({
   };
 
   const handleBoxModalCancel = () => {
-    if (boxModalState && boxModalState.mode !== "edit") {
-      boxModalState.items.forEach((it) => URL.revokeObjectURL(it.previewUrl));
+    if (boxModalState) {
+      if (boxModalState.mode === "copilotStage" && typeof boxModalState.onCancel === "function") {
+        boxModalState.onCancel(boxModalState.name);
+      }
+      if (boxModalState.mode !== "edit") {
+        boxModalState.items.forEach((it) => URL.revokeObjectURL(it.previewUrl));
+      }
     }
     setBoxModalState(null);
   };
@@ -202,6 +230,27 @@ export function DetectionList({
     const currentModal = boxModalState;
     setBoxModalState(null);
     if (!currentModal || !Array.isArray(results) || results.length === 0) return;
+
+    if (currentModal.mode === "copilotStage") {
+      const targetName = currentModal.name || itemName || "Custom Item";
+      try {
+        await onUploadCustomItem(
+          targetName,
+          results.map((r) => r.file),
+          results.map((r) => r.bboxNorm)
+        );
+        setItemName("");
+        setStagedPhotos([]);
+        if (typeof currentModal.onComplete === "function") {
+          currentModal.onComplete(targetName);
+        }
+      } catch (err) {
+        // Error surfaced via customItemError
+      } finally {
+        results.forEach((r) => URL.revokeObjectURL(r.previewUrl));
+      }
+      return;
+    }
 
     if (currentModal.mode === "stage") {
       setStagedPhotos((prev) => [...prev, ...results]);
@@ -258,6 +307,14 @@ export function DetectionList({
     const cleaned = itemName.trim();
     if (!cleaned) {
       setLocalFormError("Please enter a name for your item (e.g. My Office Chair).");
+      nameInputRef.current?.focus();
+      return;
+    }
+    const isDuplicate = customItems.some(
+      (it) => it.name.trim().toLowerCase() === cleaned.toLowerCase()
+    );
+    if (isDuplicate) {
+      setLocalFormError(`A custom item named '${cleaned}' already exists. Please choose a unique name.`);
       nameInputRef.current?.focus();
       return;
     }
@@ -782,4 +839,4 @@ export function DetectionList({
       />
     </aside>
   );
-}
+});

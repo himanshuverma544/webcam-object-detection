@@ -508,12 +508,18 @@ class _FakeCustomDetector:
         return list(self._items.values())
 
     def add_item(self, name: str, image_bytes_list, bboxes_norm=None):
-        if not name.strip():
+        cleaned = " ".join((name or "").strip().split())
+        if not cleaned:
             raise ValueError("Item name cannot be empty.")
+        for existing in self._items.values():
+            if existing.name.strip().lower() == cleaned.lower():
+                raise ValueError(
+                    f"A custom item named '{existing.name}' already exists. Please choose a unique name."
+                )
         iid = f"item_{len(self._items) + 1}"
         item = self._CustomItemOut(
             id=iid,
-            name=name.strip(),
+            name=cleaned,
             class_id=1000 + len(self._items),
             image_count=len(image_bytes_list),
             thumbnail_base64="data:image/jpeg;base64,/9j/4AAQ",
@@ -700,9 +706,295 @@ def test_chat_endpoint_guard_and_metrics(client: TestClient) -> None:
     assert res_guard.status_code == 200
     assert any(a["type"] == "GUARD_SCENE" and a["payload"]["arm"] is True for a in res_guard.json()["actions"])
 
-    res_metrics = client.post("/chat", json={"message": "show session metrics summary"})
+    # When camera is active, metrics should not open directly; prompt user that stopping camera is required
+    res_active = client.post(
+        "/chat",
+        json={
+            "message": "show session metrics summary",
+            "current_state": {"cameraStatus": "active", "hasMetrics": False},
+        },
+    )
+    assert res_active.status_code == 200
+    assert not any(a["type"] == "SHOW_METRICS" for a in res_active.json()["actions"])
+    assert "stop the camera" in res_active.json()["reply"].lower()
+
+    # When camera is stopped and metrics are available
+    res_metrics = client.post(
+        "/chat",
+        json={
+            "message": "show session metrics",
+            "current_state": {"cameraStatus": "idle", "hasMetrics": True},
+        },
+    )
     assert res_metrics.status_code == 200
-    assert any(a["type"] == "SHOW_METRICS" for a in res_metrics.json()["actions"])
+    assert any(a["type"] == "SHOW_METRICS" and a["payload"].get("tab") == "metrics" for a in res_metrics.json()["actions"])
+
+    # When user specifically asks to show summary
+    res_summary = client.post(
+        "/chat",
+        json={
+            "message": "show summary",
+            "current_state": {"cameraStatus": "idle", "hasMetrics": True},
+        },
+    )
+    assert res_summary.status_code == 200
+    show_action = next((a for a in res_summary.json()["actions"] if a["type"] == "SHOW_METRICS"), None)
+    assert show_action is not None
+    assert show_action["payload"].get("tab") == "summary"
+    assert show_action["summary"] == "Summary Opened"
+
+    # When user responds 'yes' after copilot proposed stopping camera to view metrics
+    res_yes_show = client.post(
+        "/chat",
+        json={
+            "message": "yes",
+            "history": [
+                {
+                    "role": "assistant",
+                    "content": "Session metrics and the executive summary will be available after stopping the camera. Would you like me to stop the camera and show your executive session summary now?",
+                }
+            ],
+            "current_state": {"cameraStatus": "active", "hasMetrics": False},
+        },
+    )
+    assert res_yes_show.status_code == 200
+    action_types = [a["type"] for a in res_yes_show.json()["actions"]]
+    assert "STOP_CAMERA" in action_types
+    assert "SHOW_METRICS" in action_types
+    show_act = next(a for a in res_yes_show.json()["actions"] if a["type"] == "SHOW_METRICS")
+    assert show_act["payload"].get("tab") == "summary"
+
+    # When user asks to copy summary
+    res_copy = client.post(
+        "/chat",
+        json={
+            "message": "copy summary to clipboard",
+            "current_state": {"cameraStatus": "idle", "hasMetrics": True},
+        },
+    )
+    assert res_copy.status_code == 200
+    copy_action = next((a for a in res_copy.json()["actions"] if a["type"] == "COPY_SUMMARY"), None)
+    assert copy_action is not None
+    assert copy_action["summary"] == "Summary Copied"
+
+
+def test_chat_endpoint_stop_and_email_metrics(client: TestClient) -> None:
+    """POST /chat handles email metrics request with camera lifecycle."""
+    # 1. When camera is active and user asks to send metrics email -> prompt to stop camera first
+    res_active = client.post(
+        "/chat",
+        json={
+            "message": "send metrics report via email",
+            "current_state": {"cameraStatus": "active", "hasMetrics": False},
+        },
+    )
+    assert res_active.status_code == 200
+    assert not any(a["type"] == "SEND_METRICS_EMAIL" for a in res_active.json()["actions"])
+    assert "stop the camera" in res_active.json()["reply"].lower()
+
+    # 2. When user responds 'yes' with assistant asking about stopping camera and sending report
+    res_yes = client.post(
+        "/chat",
+        json={
+            "message": "yes",
+            "history": [
+                {
+                    "role": "assistant",
+                    "content": "Session metrics are generated only after you stop the camera. Would you like me to stop the camera now so we can finalize the session and send the report?",
+                }
+            ],
+            "current_state": {"cameraStatus": "active", "hasMetrics": False},
+        },
+    )
+    assert res_yes.status_code == 200
+    action_types = [a["type"] for a in res_yes.json()["actions"]]
+    assert "STOP_CAMERA" in action_types
+    assert "SEND_METRICS_EMAIL" in action_types
+
+    # 3. Explicit "stop camera and email metrics"
+    res_explicit = client.post(
+        "/chat",
+        json={
+            "message": "stop camera and email metrics to test@example.com",
+            "current_state": {"cameraStatus": "active", "hasMetrics": False},
+        },
+    )
+    assert res_explicit.status_code == 200
+    action_types2 = [a["type"] for a in res_explicit.json()["actions"]]
+    assert "STOP_CAMERA" in action_types2
+    assert "SEND_METRICS_EMAIL" in action_types2
+
+
+def test_chat_endpoint_close_and_navigate_metrics_modal(client: TestClient) -> None:
+    """POST /chat handles modal closing and tab navigation edge cases."""
+    # 1. Close summary / modal
+    res_close = client.post(
+        "/chat",
+        json={
+            "message": "close the summary",
+            "current_state": {"cameraStatus": "idle", "hasMetrics": True, "isMetricsModalOpen": True, "metricsModalTab": "summary"},
+        },
+    )
+    assert res_close.status_code == 200
+    close_action = next((a for a in res_close.json()["actions"] if a["type"] == "CLOSE_METRICS_MODAL"), None)
+    assert close_action is not None
+    assert close_action["summary"] == "Modal Closed"
+
+    # 2. Go back / return to metrics
+    res_back = client.post(
+        "/chat",
+        json={
+            "message": "go back to metrics",
+            "current_state": {"cameraStatus": "idle", "hasMetrics": True, "isMetricsModalOpen": True, "metricsModalTab": "summary"},
+        },
+    )
+    assert res_back.status_code == 200
+    back_action = next((a for a in res_back.json()["actions"] if a["type"] == "SHOW_METRICS"), None)
+    assert back_action is not None
+    assert back_action["payload"].get("tab") == "metrics"
+
+
+def test_create_custom_item_rejects_duplicate_name(
+    client: TestClient, sample_jpeg_bytes: bytes
+) -> None:
+    """POST /custom-items returns 400 when an item with the same name already exists."""
+    fake = _FakeCustomDetector()
+    client.app.state.custom_detector = fake
+
+    # First creation succeeds
+    res1 = client.post(
+        "/custom-items",
+        data={"name": "Coffee Mug"},
+        files=[("files", ("mug.jpg", sample_jpeg_bytes, "image/jpeg"))],
+    )
+    assert res1.status_code == 201
+
+    # Second creation with identical name fails
+    res2 = client.post(
+        "/custom-items",
+        data={"name": "Coffee Mug"},
+        files=[("files", ("mug2.jpg", sample_jpeg_bytes, "image/jpeg"))],
+    )
+    assert res2.status_code == 400
+    assert "already exists" in res2.json()["detail"].lower()
+
+    # Third creation with different casing & spacing also fails
+    res3 = client.post(
+        "/custom-items",
+        data={"name": "  coffee   mug  "},
+        files=[("files", ("mug3.jpg", sample_jpeg_bytes, "image/jpeg"))],
+    )
+    assert res3.status_code == 400
+    assert "already exists" in res3.json()["detail"].lower()
+
+
+def test_chat_endpoint_custom_item_duplicate_and_camera_validation(client: TestClient) -> None:
+    """POST /chat validates camera status and duplicate name before capturing custom item."""
+    # 1. Camera stopped -> prompt to start camera first
+    res_stopped = client.post(
+        "/chat",
+        json={
+            "message": "take snapshot and save as 'Water Bottle'",
+            "current_state": {"cameraStatus": "idle", "customItemNames": []},
+        },
+    )
+    assert res_stopped.status_code == 200
+    assert not any(a["type"] == "CAPTURE_CUSTOM_ITEM" for a in res_stopped.json()["actions"])
+    assert "camera is currently stopped" in res_stopped.json()["reply"].lower()
+
+    # 2. Camera active but name is duplicate -> warn user
+    res_dup = client.post(
+        "/chat",
+        json={
+            "message": "save as custom item 'Water Bottle'",
+            "current_state": {"cameraStatus": "active", "customItemNames": ["Water Bottle"]},
+        },
+    )
+    assert res_dup.status_code == 200
+    assert not any(a["type"] == "CAPTURE_CUSTOM_ITEM" for a in res_dup.json()["actions"])
+    assert "already exists" in res_dup.json()["reply"].lower()
+
+    # 4. Multi-reference photos prompt with 'My Item' name in quotes
+    res_multi = client.post(
+        "/chat",
+        json={
+            "message": "Save these 2 reference photos as custom item 'My Item'",
+            "current_state": {
+                "cameraStatus": "active",
+                "hasAttachedImage": True,
+                "attachedCount": 2,
+                "customItemNames": ["Water Bottle"],
+            },
+        },
+    )
+    assert res_multi.status_code == 200
+    multi_action = next(
+        (a for a in res_multi.json()["actions"] if a["type"] == "CAPTURE_CUSTOM_ITEM"), None
+    )
+    assert multi_action is not None
+    assert multi_action["payload"]["name"] == "My Item"
+    assert "please provide a name" not in res_multi.json()["reply"].lower()
+
+    # 5. Delete custom item command: "delete My Item"
+    res_del = client.post(
+        "/chat",
+        json={
+            "message": "delete My Item",
+            "current_state": {
+                "cameraStatus": "active",
+                "customItemNames": ["My Item", "Water Bottle"],
+            },
+        },
+    )
+    assert res_del.status_code == 200
+    del_action = next(
+        (a for a in res_del.json()["actions"] if a["type"] == "DELETE_CUSTOM_ITEM"), None
+    )
+    assert del_action is not None
+    assert del_action["payload"]["item_ref"] == "My Item"
+
+    # 6. Set match strictness (verifying it does NOT set confidence threshold)
+    res_strict = client.post(
+        "/chat",
+        json={
+            "message": "set match strictness to 85%",
+            "current_state": {
+                "cameraStatus": "active",
+                "similarityThreshold": 0.65,
+                "confidence": 0.35,
+            },
+        },
+    )
+    assert res_strict.status_code == 200
+    strict_action = next(
+        (a for a in res_strict.json()["actions"] if a["type"] == "SET_SIMILARITY_THRESHOLD"), None
+    )
+    assert strict_action is not None
+    assert strict_action["payload"]["value"] == 0.85
+    assert not any(a["type"] == "SET_CONFIDENCE" for a in res_strict.json()["actions"])
+
+    # 7. Add images to existing item
+    res_add_imgs = client.post(
+        "/chat",
+        json={
+            "message": "add these 2 photos to My Item",
+            "current_state": {
+                "cameraStatus": "active",
+                "hasAttachedImage": True,
+                "attachedCount": 2,
+                "customItemNames": ["My Item"],
+            },
+        },
+    )
+    assert res_add_imgs.status_code == 200
+    add_action = next(
+        (a for a in res_add_imgs.json()["actions"] if a["type"] == "ADD_CUSTOM_ITEM_IMAGES"), None
+    )
+    assert add_action is not None
+    assert add_action["payload"]["item_ref"] == "My Item"
+
+
+
 
 
 

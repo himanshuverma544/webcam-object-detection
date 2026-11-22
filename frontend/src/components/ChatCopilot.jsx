@@ -6,12 +6,11 @@ import {
   FiCornerDownLeft,
   FiImage,
   FiMaximize2,
-  FiMessageSquare,
   FiMinimize2,
   FiTrash2,
   FiX,
-  FiZap,
 } from "react-icons/fi";
+import { ObjectBoxModal } from "./ObjectBoxModal";
 import { sendChatMessage } from "../services/api";
 
 const QUICK_SUGGESTIONS = [
@@ -23,15 +22,32 @@ const QUICK_SUGGESTIONS = [
   { label: "📊 Show Metrics", prompt: "Show session metrics summary" },
 ];
 
+/**
+ * Helper to extract an item name if already present in user prompt.
+ */
+function extractItemName(text) {
+  if (!text) return "";
+  const match = text.match(/['"]([^'"]+)['"]/);
+  if (match) return match[1].trim();
+  const patternMatch = text.match(
+    /\b(?:custom item|save as|named|called|item)\s+([a-zA-Z0-9 _-]+)/i
+  );
+  return patternMatch ? patternMatch[1].trim() : "";
+}
+
 export function ChatCopilot({
   cameraStatus,
   isDetecting,
   confidence,
+  similarityThreshold = 0.65,
   selectedClasses,
   customItems,
   selectedCustomIds,
   isGuarded,
+  hasMetrics = false,
   supportedClasses,
+  isMetricsModalOpen = false,
+  metricsModalTab = "metrics",
   onExecuteActions,
   onCaptureLiveSnapshot,
 }) {
@@ -47,8 +63,8 @@ export function ChatCopilot({
     },
   ]);
   const [inputPrompt, setInputPrompt] = useState("");
-  const [attachedFile, setAttachedFile] = useState(null);
-  const [previewUrl, setPreviewUrl] = useState(null);
+  const [attachedFiles, setAttachedFiles] = useState([]); // [{ id, file, previewUrl, objectUrlToRevoke, name }]
+  const [cropModalState, setCropModalState] = useState(null);
   const [isLoading, setIsLoading] = useState(false);
   const [unreadCount, setUnreadCount] = useState(0);
 
@@ -63,16 +79,16 @@ export function ChatCopilot({
     }
   }, [messages, isOpen, isMinimized, isLoading]);
 
-  // Clean up object URL when attachedFile changes
+  // Clean up object URLs on unmount
   useEffect(() => {
-    if (attachedFile) {
-      const url = URL.createObjectURL(attachedFile);
-      setPreviewUrl(url);
-      return () => URL.revokeObjectURL(url);
-    } else {
-      setPreviewUrl(null);
-    }
-  }, [attachedFile]);
+    return () => {
+      attachedFiles.forEach((it) => {
+        if (it.objectUrlToRevoke) {
+          URL.revokeObjectURL(it.objectUrlToRevoke);
+        }
+      });
+    };
+  }, [attachedFiles]);
 
   // Reset unread count when opening
   useEffect(() => {
@@ -100,14 +116,18 @@ export function ChatCopilot({
 
   const handleFileChange = (e) => {
     const file = e.target.files?.[0];
-    if (file) {
-      setAttachedFile(file);
-      if (!inputPrompt.trim()) {
-        const cleanName = file.name.replace(/\.[^.]+$/, "").replace(/[-_]/g, " ");
-        setInputPrompt(`Save this photo as custom item '${cleanName}'`);
-      }
-    }
     e.target.value = "";
+    if (!file) return;
+
+    const existingNameFromPrompt = extractItemName(inputPrompt);
+    const existingName = existingNameFromPrompt || attachedFiles[0]?.name || null;
+    const cleanName = existingName || file.name.replace(/\.[^.]+$/, "").replace(/[-_]/g, " ").trim();
+    const url = URL.createObjectURL(file);
+    setCropModalState({
+      items: [{ file, previewUrl: url }],
+      defaultName: cleanName || "Custom Item",
+      isLiveSnapshot: false,
+    });
   };
 
   const handleLiveSnapshot = async () => {
@@ -118,34 +138,97 @@ export function ChatCopilot({
     try {
       const file = await onCaptureLiveSnapshot("live_snapshot");
       if (file) {
-        setAttachedFile(file);
-        if (!inputPrompt.trim()) {
-          setInputPrompt("Save this snapshot as custom item 'My Item'");
-        }
+        const existingNameFromPrompt = extractItemName(inputPrompt);
+        const existingName = existingNameFromPrompt || attachedFiles[0]?.name || null;
+        const url = URL.createObjectURL(file);
+        setCropModalState({
+          items: [{ file, previewUrl: url }],
+          defaultName: existingName || "My Item",
+          isLiveSnapshot: true,
+        });
       }
     } catch (err) {
       console.error("Failed to capture snapshot:", err);
     }
   };
 
+  const handleRemoveAttached = (idToRemove) => {
+    setAttachedFiles((prev) => {
+      const item = prev.find((it) => it.id === idToRemove);
+      if (item?.objectUrlToRevoke) {
+        URL.revokeObjectURL(item.objectUrlToRevoke);
+      }
+      const updated = prev.filter((it) => it.id !== idToRemove);
+
+      const promptTrimmed = inputPrompt.trim();
+      const isDefaultPattern =
+        !promptTrimmed ||
+        /^Save (this|these) (snapshot|photo|\d+ reference photos) as custom item/i.test(
+          promptTrimmed
+        );
+
+      if (isDefaultPattern) {
+        const targetName =
+          extractItemName(inputPrompt) || updated[0]?.name || "My Item";
+        const count = updated.length;
+        if (count === 0) {
+          setInputPrompt("");
+        } else if (count === 1) {
+          setInputPrompt(`Save this photo as custom item '${targetName}'`);
+        } else {
+          setInputPrompt(
+            `Save these ${count} reference photos as custom item '${targetName}'`
+          );
+        }
+      }
+
+      return updated;
+    });
+  };
+
+  const handleClearAllAttached = () => {
+    attachedFiles.forEach((it) => {
+      if (it.objectUrlToRevoke) {
+        URL.revokeObjectURL(it.objectUrlToRevoke);
+      }
+    });
+    setAttachedFiles([]);
+    const promptTrimmed = inputPrompt.trim();
+    if (
+      /^Save (this|these) (snapshot|photo|\d+ reference photos) as custom item/i.test(
+        promptTrimmed
+      )
+    ) {
+      setInputPrompt("");
+    }
+  };
+
   const handleSend = async (overridePrompt) => {
     const textToSend = (overridePrompt !== undefined ? overridePrompt : inputPrompt).trim();
-    const fileToSend = attachedFile;
+    const filesToSend = attachedFiles.map((it) => it.file);
+    const primaryFile = filesToSend[0] || null;
 
-    if (!textToSend && !fileToSend) return;
+    if (!textToSend && filesToSend.length === 0) return;
 
     const userMessageId = "user_" + Date.now();
     const userMsg = {
       id: userMessageId,
       role: "user",
-      content: textToSend || (fileToSend ? `[Uploaded image: ${fileToSend.name}]` : ""),
-      previewUrl: previewUrl,
+      content:
+        textToSend ||
+        (filesToSend.length > 0
+          ? `[Uploaded ${filesToSend.length} reference photo${
+              filesToSend.length > 1 ? "s" : ""
+            }: ${filesToSend.map((f) => f.name).join(", ")}]`
+          : ""),
+      previewUrls: attachedFiles.map((it) => it.previewUrl),
       timestamp: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
     };
 
     setMessages((prev) => [...prev, userMsg]);
     setInputPrompt("");
-    setAttachedFile(null);
+    // Note: Do not clear attachedFiles yet; if Copilot asks a clarification question,
+    // we keep the staged files so the user doesn't lose their cropped photos!
     setIsLoading(true);
 
     // Prepare current UI state context for copilot
@@ -153,11 +236,18 @@ export function ChatCopilot({
       cameraStatus,
       isDetecting,
       confidence,
+      similarityThreshold,
       selectedClasses,
       customItemCount: customItems.length,
+      customItemNames: (customItems || []).map((it) => it.name),
       selectedCustomIds,
       isGuarded,
+      hasMetrics: Boolean(hasMetrics),
+      hasAttachedImage: filesToSend.length > 0,
+      attachedCount: filesToSend.length,
       supportedClassesCount: supportedClasses?.length || 80,
+      isMetricsModalOpen: Boolean(isMetricsModalOpen),
+      metricsModalTab: metricsModalTab || "metrics",
     };
 
     // Format recent history for backend
@@ -171,7 +261,7 @@ export function ChatCopilot({
         message: textToSend,
         history: historyPayload,
         currentState,
-        file: fileToSend,
+        file: primaryFile,
       });
 
       const assistantMsg = {
@@ -186,9 +276,43 @@ export function ChatCopilot({
 
       setMessages((prev) => [...prev, assistantMsg]);
 
+      const hasCustomItemAction =
+        Array.isArray(response.actions) &&
+        response.actions.some(
+          (a) => a.type === "CAPTURE_CUSTOM_ITEM" || a.type === "ADD_CUSTOM_ITEM_IMAGES"
+        );
+
+      const isAskingForName =
+        typeof response.reply === "string" &&
+        (response.reply.toLowerCase().includes("please provide a name") ||
+          response.reply.toLowerCase().includes("already exists"));
+
+      // Keep staged files if Copilot is asking for an item name or resolving duplicate name
+      if (hasCustomItemAction || !isAskingForName) {
+        setAttachedFiles([]);
+      }
+
       // Execute actions in the parent React application
       if (Array.isArray(response.actions) && response.actions.length > 0 && onExecuteActions) {
-        onExecuteActions(response.actions);
+        onExecuteActions(response.actions, {
+          attachedFile: primaryFile,
+          attachedFiles: filesToSend,
+          onNotifyCopilot: (feedbackText) => {
+            if (!feedbackText) return;
+            setMessages((prev) => [
+              ...prev,
+              {
+                id: "feedback_" + Date.now(),
+                role: "assistant",
+                content: feedbackText,
+                timestamp: new Date().toLocaleTimeString([], {
+                  hour: "2-digit",
+                  minute: "2-digit",
+                }),
+              },
+            ]);
+          },
+        });
       }
 
       if (!isOpen) {
@@ -201,7 +325,9 @@ export function ChatCopilot({
         {
           id: "err_" + Date.now(),
           role: "assistant",
-          content: `⚠️ **Error communicating with AI Copilot:** ${err.message || "Request failed"}. Please try again.`,
+          content: `⚠️ **Error communicating with AI Copilot:** ${
+            err.message || "Request failed"
+          }. Please try again.`,
           timestamp: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
         },
       ]);
@@ -314,11 +440,17 @@ export function ChatCopilot({
                       </div>
                     )}
                     <div className="copilot-msg-bubble">
-                      {m.previewUrl && (
+                      {Array.isArray(m.previewUrls) && m.previewUrls.length > 0 ? (
+                        <div className="copilot-msg-attachments-grid">
+                          {m.previewUrls.map((pUrl, pIdx) => (
+                            <img key={pIdx} src={pUrl} alt={`Attached ${pIdx + 1}`} />
+                          ))}
+                        </div>
+                      ) : m.previewUrl ? (
                         <div className="copilot-msg-attachment">
                           <img src={m.previewUrl} alt="Attached input" />
                         </div>
-                      )}
+                      ) : null}
 
                       <div className="copilot-msg-markdown">
                         <ReactMarkdown>{m.content}</ReactMarkdown>
@@ -355,23 +487,42 @@ export function ChatCopilot({
                 <div ref={messagesEndRef} />
               </div>
 
-              {/* Attachment Preview Box */}
-              {previewUrl && (
-                <div className="copilot-attachment-bar">
-                  <div className="copilot-attachment-preview">
-                    <img src={previewUrl} alt="Ready to upload" />
-                    <span className="copilot-attachment-name">
-                      {attachedFile?.name || "Snapshot frame"}
+              {/* Multi-Photo Attachment Bar */}
+              {attachedFiles.length > 0 && (
+                <div className="copilot-multi-attachment-bar">
+                  <div className="copilot-multi-attachment-header">
+                    <span className="copilot-attachment-count-badge">
+                      📸 {attachedFiles.length} reference photo{attachedFiles.length > 1 ? "s" : ""} staged
                     </span>
+                    <button
+                      type="button"
+                      className="copilot-clear-all-attachments-btn"
+                      onClick={handleClearAllAttached}
+                      title="Clear all staged photos"
+                    >
+                      Clear all
+                    </button>
                   </div>
-                  <button
-                    type="button"
-                    className="copilot-remove-attachment-btn"
-                    onClick={() => setAttachedFile(null)}
-                    title="Remove attachment"
-                  >
-                    <FiX size={14} />
-                  </button>
+                  <div className="copilot-attachment-thumbnails-scroll">
+                    {attachedFiles.map((att, idx) => (
+                      <div
+                        key={att.id}
+                        className="copilot-thumbnail-card"
+                        title={att.file?.name || `Photo #${idx + 1}`}
+                      >
+                        <img src={att.previewUrl} alt={`Photo ${idx + 1}`} />
+                        <span className="copilot-thumbnail-idx">#{idx + 1}</span>
+                        <button
+                          type="button"
+                          className="copilot-thumbnail-remove-btn"
+                          onClick={() => handleRemoveAttached(att.id)}
+                          title="Remove photo"
+                        >
+                          <FiX size={10} />
+                        </button>
+                      </div>
+                    ))}
+                  </div>
                 </div>
               )}
 
@@ -411,8 +562,8 @@ export function ChatCopilot({
                     ref={inputRef}
                     className="copilot-textarea"
                     placeholder={
-                      attachedFile
-                        ? "e.g. Save as custom item 'My Backpack'..."
+                      attachedFiles.length > 0
+                        ? `e.g. Save as custom item '${attachedFiles[0]?.name || "My Item"}'...`
                         : "Ask anything... (e.g. 'detect person', 'guard scene')"
                     }
                     rows={1}
@@ -426,7 +577,7 @@ export function ChatCopilot({
                     type="button"
                     className="copilot-send-btn"
                     onClick={() => handleSend()}
-                    disabled={isLoading || (!inputPrompt.trim() && !attachedFile)}
+                    disabled={isLoading || (!inputPrompt.trim() && attachedFiles.length === 0)}
                     title="Send instruction (Enter)"
                   >
                     <FiCornerDownLeft size={15} />
@@ -437,7 +588,83 @@ export function ChatCopilot({
           )}
         </aside>
       )}
+
+      {Boolean(cropModalState) && (
+        <ObjectBoxModal
+          isOpen={Boolean(cropModalState)}
+          items={cropModalState?.items || []}
+          onCancel={() => {
+            if (cropModalState) {
+              cropModalState.items.forEach((it) => URL.revokeObjectURL(it.previewUrl));
+            }
+            setCropModalState(null);
+          }}
+          onConfirm={async (results) => {
+            const current = cropModalState;
+            setCropModalState(null);
+            if (!current || !results || results.length === 0) return;
+
+            const res = results[0];
+            try {
+              let finalFile = res.file;
+              let finalPreviewUrl = res.croppedPreviewUrl;
+              let objectUrlToRevoke = null;
+
+              if (res.croppedPreviewUrl && res.croppedPreviewUrl.startsWith("data:")) {
+                const blob = await (await fetch(res.croppedPreviewUrl)).blob();
+                const baseName = (current.defaultName || "custom_item")
+                  .toLowerCase()
+                  .replace(/[^a-z0-9_-]/g, "_");
+                finalFile = new File([blob], `${baseName}_ref_${Date.now()}.jpg`, {
+                  type: "image/jpeg",
+                });
+              } else {
+                finalPreviewUrl = URL.createObjectURL(finalFile);
+                objectUrlToRevoke = finalPreviewUrl;
+              }
+
+              const newAttachment = {
+                id: "att_" + Date.now() + "_" + Math.random().toString(36).slice(2, 7),
+                file: finalFile,
+                previewUrl: finalPreviewUrl,
+                objectUrlToRevoke,
+                name: current.defaultName || "Custom Item",
+              };
+
+              const newFiles = [...attachedFiles, newAttachment];
+              setAttachedFiles(newFiles);
+
+              // Update prompt if empty or if matching default pattern
+              const promptTrimmed = inputPrompt.trim();
+              const isDefaultPattern =
+                !promptTrimmed ||
+                /^Save (this|these) (snapshot|photo|\d+ reference photos) as custom item/i.test(
+                  promptTrimmed
+                );
+
+              if (isDefaultPattern) {
+                const targetName =
+                  extractItemName(inputPrompt) || current.defaultName || "My Item";
+                const count = newFiles.length;
+                if (count === 1) {
+                  const actionWord = current.isLiveSnapshot ? "snapshot" : "photo";
+                  setInputPrompt(`Save this ${actionWord} as custom item '${targetName}'`);
+                } else {
+                  setInputPrompt(
+                    `Save these ${count} reference photos as custom item '${targetName}'`
+                  );
+                }
+              }
+
+              inputRef.current?.focus();
+            } catch (err) {
+              console.error("Failed to process cropped file:", err);
+            } finally {
+              current.items.forEach((it) => URL.revokeObjectURL(it.previewUrl));
+            }
+          }}
+        />
+      )}
     </>
   );
 }
-

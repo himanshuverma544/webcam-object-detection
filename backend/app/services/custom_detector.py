@@ -648,6 +648,13 @@ class CustomObjectDetector:
         with self._lock:
             self.ensure_models_loaded()
 
+            # Enforce unique custom item names (case-insensitive and trimmed)
+            for existing in self._items.values():
+                if existing.name.strip().lower() == cleaned_name.lower():
+                    raise ValueError(
+                        f"A custom item named '{existing.name}' already exists. Please choose a unique name."
+                    )
+
             item_id = f"item_{uuid.uuid4().hex[:8]}"
             class_id = self._next_class_id
             self._next_class_id += 1

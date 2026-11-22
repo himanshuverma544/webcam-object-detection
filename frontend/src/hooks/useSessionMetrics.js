@@ -26,6 +26,7 @@ export function useSessionMetrics({
   selectedClasses,
 }) {
   const [completedMetrics, setCompletedMetrics] = useState(null);
+  const latestMetricsRef = useRef(null);
 
   // Active session tracking state in refs (to avoid excessive re-renders during 30 FPS loops)
   const sessionActiveRef = useRef(false);
@@ -232,6 +233,7 @@ export function useSessionMetrics({
       missingEvents: missingEventsList,
     };
 
+    latestMetricsRef.current = metricsSnapshot;
     setCompletedMetrics(metricsSnapshot);
     sessionActiveRef.current = false;
     return metricsSnapshot;
@@ -245,11 +247,17 @@ export function useSessionMetrics({
     selectedClasses,
   ]);
 
+  const clearMetrics = useCallback(() => {
+    latestMetricsRef.current = null;
+    setCompletedMetrics(null);
+  }, []);
+
   return {
     completedMetrics,
-    hasMetrics: Boolean(completedMetrics),
+    hasMetrics: Boolean(completedMetrics || latestMetricsRef.current),
+    latestMetricsRef,
     snapshotSession,
-    clearMetrics: () => setCompletedMetrics(null),
+    clearMetrics,
   };
 }
 

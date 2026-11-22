@@ -104,6 +104,12 @@ class Settings(BaseSettings):
 
 def get_settings() -> Settings:
     """Return fresh settings loaded from environment and .env file."""
+    from pathlib import Path
     from dotenv import load_dotenv
-    load_dotenv(override=True)
+
+    env_path = Path(__file__).resolve().parent.parent.parent / ".env"
+    if env_path.exists():
+        load_dotenv(env_path, override=True)
+    else:
+        load_dotenv(override=True)
     return Settings()

@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useState } from "react";
+import React, { useCallback, useEffect, useRef, useState } from "react";
 import { ChatCopilot } from "./components/ChatCopilot";
 import { ControlPanel } from "./components/ControlPanel";
 import { DetectionList } from "./components/DetectionList";
@@ -10,6 +10,7 @@ import { useSceneTracker } from "./hooks/useSceneTracker";
 import { useSessionMetrics } from "./hooks/useSessionMetrics";
 import { useWebcamDetection } from "./hooks/useWebcamDetection";
 import { API_BASE_URL, resetTrack, sendMetricsEmail } from "./services/api";
+import { generateExecutiveSummary } from "./utils/summaryGenerator";
 import "./App.css";
 
 export function App() {
@@ -83,11 +84,26 @@ export function App() {
   } = useSceneTracker();
 
   const [isMetricsModalOpen, setIsMetricsModalOpen] = useState(false);
+  const [metricsModalTab, setMetricsModalTab] = useState("metrics");
+  const [copiedSummaryTick, setCopiedSummaryTick] = useState(0);
+  const [emailNotice, setEmailNotice] = useState(null);
+  const detectionListRef = useRef(null);
+
+  // Auto-dismiss successful email banner after 6 seconds
+  useEffect(() => {
+    if (emailNotice && emailNotice.type === "success") {
+      const timer = setTimeout(() => {
+        setEmailNotice(null);
+      }, 6000);
+      return () => clearTimeout(timer);
+    }
+  }, [emailNotice]);
 
   // Session metrics accumulator
   const {
     completedMetrics,
     hasMetrics,
+    latestMetricsRef,
     snapshotSession,
   } = useSessionMetrics({
     cameraStatus,
@@ -108,8 +124,9 @@ export function App() {
 
   // Intercept camera stop to freeze session metrics before scene resets
   const handleStopCamera = useCallback(() => {
-    snapshotSession();
+    const snap = snapshotSession();
     stopCamera();
+    return snap;
   }, [snapshotSession, stopCamera]);
 
   // Run scene tracking once on every completed detection frame
@@ -128,8 +145,12 @@ export function App() {
 
   // Execute structured AI Copilot action commands on the UI
   const handleExecuteCopilotActions = useCallback(
-    (actions) => {
+    (actions, options = {}) => {
       if (!Array.isArray(actions)) return;
+      const { onNotifyCopilot } = options;
+
+      // Keep track of synchronously created metrics snapshot (e.g. when stopping camera and sending email in same turn)
+      let activeMetricsSnapshot = completedMetrics || latestMetricsRef.current;
 
       for (const action of actions) {
         if (!action || !action.type) continue;
@@ -140,9 +161,13 @@ export function App() {
             startCamera();
             break;
 
-          case "STOP_CAMERA":
-            handleStopCamera();
+          case "STOP_CAMERA": {
+            const snap = handleStopCamera();
+            if (snap) {
+              activeMetricsSnapshot = snap;
+            }
             break;
+          }
 
           case "TOGGLE_DETECTION": {
             const act = payload.action;
@@ -217,12 +242,60 @@ export function App() {
           }
 
           case "DELETE_CUSTOM_ITEM": {
-            const itemRef = String(payload.item_ref || "").toLowerCase();
+            const itemRef = String(payload.item_ref || "").trim().toLowerCase();
             const target = customItems.find(
-              (it) => it.id === itemRef || it.name.toLowerCase() === itemRef
+              (it) => it.id.toLowerCase() === itemRef || it.name.trim().toLowerCase() === itemRef
             );
             if (target) {
               removeCustomItem(target.id);
+              if (typeof onNotifyCopilot === "function") {
+                onNotifyCopilot(`🗑️ **Deleted!** Custom item **'${target.name}'** has been removed.`);
+              }
+            } else {
+              if (typeof onNotifyCopilot === "function") {
+                onNotifyCopilot(`⚠️ **Notice:** Custom item '${payload.item_ref}' was not found.`);
+              }
+            }
+            break;
+          }
+
+          case "ADD_CUSTOM_ITEM_IMAGES": {
+            const itemRef = String(payload.item_ref || "").trim().toLowerCase();
+            const target = customItems.find(
+              (it) => it.id.toLowerCase() === itemRef || it.name.trim().toLowerCase() === itemRef
+            );
+            if (!target) {
+              if (typeof onNotifyCopilot === "function") {
+                onNotifyCopilot(
+                  `⚠️ **Notice:** Custom item '${payload.item_ref}' was not found. Please create it first.`
+                );
+              }
+              break;
+            }
+
+            const filesToUpload =
+              Array.isArray(options?.attachedFiles) && options.attachedFiles.length > 0
+                ? options.attachedFiles
+                : options?.attachedFile
+                ? [options.attachedFile]
+                : null;
+
+            if (filesToUpload && filesToUpload.length > 0) {
+              addImagesToCustomItem(target.id, filesToUpload, null);
+              if (typeof onNotifyCopilot === "function") {
+                const count = filesToUpload.length;
+                onNotifyCopilot(
+                  `✅ **Updated!** Added ${count} new reference photo${
+                    count > 1 ? "s" : ""
+                  } to **'${target.name}'**.`
+                );
+              }
+            } else {
+              if (typeof onNotifyCopilot === "function") {
+                onNotifyCopilot(
+                  `📸 Please take a snapshot or upload photos first, then send "Add these photos to '${target.name}'".`
+                );
+              }
             }
             break;
           }
@@ -230,27 +303,104 @@ export function App() {
           case "SET_SIMILARITY_THRESHOLD":
             if (typeof payload.value === "number") {
               setSimilarityThreshold(payload.value);
+              if (typeof onNotifyCopilot === "function") {
+                const pct = Math.round(payload.value * 100);
+                onNotifyCopilot(`🎯 Match strictness set to **${pct}%**.`);
+              }
             }
             break;
 
           case "CAPTURE_CUSTOM_ITEM": {
-            const itemName = payload.name || "Custom Item";
-            if (cameraStatus === "active") {
-              captureLiveSnapshotFile(itemName).then((file) => {
-                if (file) {
-                  uploadCustomItem(itemName, [file], null);
+            const rawName = payload.name || "Custom Item";
+            const itemName = rawName.trim();
+
+            // Duplicate check (case-insensitive)
+            const isDuplicate = customItems.some(
+              (it) => it.name.trim().toLowerCase() === itemName.toLowerCase()
+            );
+            if (isDuplicate) {
+              if (typeof onNotifyCopilot === "function") {
+                onNotifyCopilot(
+                  `⚠️ **Notice:** A custom item named '**${itemName}**' already exists. Please choose a unique name or delete the existing item first.`
+                );
+              }
+              break;
+            }
+
+            // If reference photos were attached from Copilot (already cropped by user upon uploading/snapping):
+            const filesToUpload =
+              Array.isArray(options?.attachedFiles) && options.attachedFiles.length > 0
+                ? options.attachedFiles
+                : options?.attachedFile
+                ? [options.attachedFile]
+                : null;
+
+            if (filesToUpload && filesToUpload.length > 0) {
+              uploadCustomItem(itemName, filesToUpload, null);
+              if (typeof onNotifyCopilot === "function") {
+                const count = filesToUpload.length;
+                onNotifyCopilot(
+                  `✅ **Created!** Custom reference item **'${itemName}'** has been saved with ${count} reference photo${count > 1 ? "s" : ""} and enabled for detection.`
+                );
+              }
+              break;
+            }
+
+            if (cameraStatus !== "active") {
+              if (typeof onNotifyCopilot === "function") {
+                onNotifyCopilot(
+                  `⚠️ **Notice:** The camera is currently stopped. Please start the camera first so I can capture a snapshot of your item.`
+                );
+              }
+              break;
+            }
+
+            if (detectionListRef.current?.isCropModalOpen()) {
+              if (typeof onNotifyCopilot === "function") {
+                onNotifyCopilot(
+                  `⚠️ **Notice:** A crop dialog is already open. Please complete or cancel the current selection first.`
+                );
+              }
+              break;
+            }
+
+            captureLiveSnapshotFile(itemName)
+              .then((file) => {
+                if (!file) {
+                  if (typeof onNotifyCopilot === "function") {
+                    onNotifyCopilot(`⚠️ **Notice:** Failed to capture live snapshot from camera.`);
+                  }
+                  return;
+                }
+
+                if (detectionListRef.current) {
+                  detectionListRef.current.stageCopilotCapture({
+                    name: itemName,
+                    file,
+                    onComplete: (savedName) => {
+                      if (typeof onNotifyCopilot === "function") {
+                        onNotifyCopilot(
+                          `✅ **Created!** Custom reference item **'${savedName}'** has been saved with your custom crop and enabled for detection.`
+                        );
+                      }
+                    },
+                    onCancel: (cancelledName) => {
+                      if (typeof onNotifyCopilot === "function") {
+                        onNotifyCopilot(
+                          `ℹ️ Custom item creation for **'${cancelledName}'** was cancelled.`
+                        );
+                      }
+                    },
+                  });
+                }
+              })
+              .catch((err) => {
+                if (typeof onNotifyCopilot === "function") {
+                  onNotifyCopilot(
+                    `⚠️ **Error:** Could not capture frame: ${err.message || "Unknown error"}`
+                  );
                 }
               });
-            } else {
-              startCamera();
-              setTimeout(() => {
-                captureLiveSnapshotFile(itemName).then((file) => {
-                  if (file) {
-                    uploadCustomItem(itemName, [file], null);
-                  }
-                });
-              }, 1200);
-            }
             break;
           }
 
@@ -274,14 +424,128 @@ export function App() {
             break;
           }
 
-          case "SHOW_METRICS":
-            setIsMetricsModalOpen(true);
-            break;
+          case "SHOW_METRICS": {
+            const requestedTab =
+              payload.tab === "summary" || payload.view === "summary"
+                ? "summary"
+                : "metrics";
+            setMetricsModalTab(requestedTab);
 
-          case "SEND_METRICS_EMAIL":
-            if (completedMetrics) {
-              sendMetricsEmail(completedMetrics, payload.recipient_email);
+            let metricsToShow = activeMetricsSnapshot || latestMetricsRef.current || completedMetrics;
+            if (!metricsToShow && cameraStatus === "active") {
+              metricsToShow = handleStopCamera();
+              if (metricsToShow) {
+                activeMetricsSnapshot = metricsToShow;
+              }
             }
+            if (metricsToShow || hasMetrics || cameraStatus !== "active") {
+              setIsMetricsModalOpen(true);
+            }
+            break;
+          }
+
+          case "COPY_SUMMARY": {
+            let metricsToCopy = activeMetricsSnapshot || latestMetricsRef.current || completedMetrics;
+            if (!metricsToCopy && cameraStatus === "active") {
+              metricsToCopy = handleStopCamera();
+              if (metricsToCopy) {
+                activeMetricsSnapshot = metricsToCopy;
+              }
+            }
+
+            if (metricsToCopy) {
+              const summaryContent = generateExecutiveSummary(metricsToCopy);
+              if (navigator?.clipboard?.writeText) {
+                navigator.clipboard.writeText(summaryContent).catch(() => {
+                  const textarea = document.createElement("textarea");
+                  textarea.value = summaryContent;
+                  document.body.appendChild(textarea);
+                  textarea.select();
+                  try {
+                    document.execCommand("copy");
+                  } catch (e) {}
+                  document.body.removeChild(textarea);
+                });
+              } else {
+                const textarea = document.createElement("textarea");
+                textarea.value = summaryContent;
+                document.body.appendChild(textarea);
+                textarea.select();
+                try {
+                  document.execCommand("copy");
+                } catch (e) {}
+                document.body.removeChild(textarea);
+              }
+              setCopiedSummaryTick((t) => t + 1);
+              if (typeof onNotifyCopilot === "function") {
+                onNotifyCopilot("📋 **Copied!** Executive session summary has been copied to your clipboard.");
+              }
+            } else {
+              if (typeof onNotifyCopilot === "function") {
+                onNotifyCopilot("⚠️ **Notice:** No session metrics recorded yet. Start and stop the camera first to generate a summary.");
+              }
+            }
+            break;
+          }
+
+          case "SEND_METRICS_EMAIL": {
+            let metricsToSend = activeMetricsSnapshot || latestMetricsRef.current || completedMetrics;
+            if (!metricsToSend && cameraStatus === "active") {
+              metricsToSend = handleStopCamera();
+              if (metricsToSend) {
+                activeMetricsSnapshot = metricsToSend;
+              }
+            }
+
+            if (metricsToSend) {
+              const targetEmail = (payload.recipient_email || "").trim() || undefined;
+              setEmailNotice({
+                type: "info",
+                message: targetEmail
+                  ? `Dispatching metrics report to ${targetEmail}...`
+                  : "Dispatching metrics report via email...",
+              });
+              sendMetricsEmail(metricsToSend, targetEmail)
+                .then((res) => {
+                  const successMsg =
+                    res?.message ||
+                    `Metrics report successfully sent${res?.recipient ? ` to ${res.recipient}` : ""}!`;
+                  setEmailNotice({
+                    type: "success",
+                    message: successMsg,
+                  });
+                  if (typeof onNotifyCopilot === "function") {
+                    onNotifyCopilot(`📧 **Email Sent:** ${successMsg}`);
+                  }
+                })
+                .catch((err) => {
+                  const errorMsg =
+                    err?.message ||
+                    "Failed to dispatch metrics report email. Check backend settings.";
+                  setEmailNotice({
+                    type: "error",
+                    message: errorMsg,
+                  });
+                  if (typeof onNotifyCopilot === "function") {
+                    onNotifyCopilot(`❌ **Email Failed:** ${errorMsg}`);
+                  }
+                });
+            } else {
+              const warnMsg =
+                "No session metrics recorded yet. Start and stop the camera first to generate session metrics.";
+              setEmailNotice({
+                type: "warning",
+                message: warnMsg,
+              });
+              if (typeof onNotifyCopilot === "function") {
+                onNotifyCopilot(`⚠️ **Notice:** ${warnMsg}`);
+              }
+            }
+            break;
+          }
+
+          case "CLOSE_METRICS_MODAL":
+            setIsMetricsModalOpen(false);
             break;
 
           case "RESET_TRACKER":
@@ -318,6 +582,8 @@ export function App() {
       toggleGuard,
       dismissMissingItem,
       completedMetrics,
+      hasMetrics,
+      latestMetricsRef,
       resetScene,
     ]
   );
@@ -363,6 +629,48 @@ export function App() {
         onDismiss={dismissMissingItem}
       />
 
+      {emailNotice && (
+        <div
+          className={`alert-banner alert-${emailNotice.type}`}
+          role="status"
+          style={{
+            display: "flex",
+            justifyContent: "space-between",
+            alignItems: "center",
+            marginTop: "12px",
+          }}
+        >
+          <span>
+            <strong>
+              {emailNotice.type === "error"
+                ? "Email Error:"
+                : emailNotice.type === "success"
+                ? "Email Sent:"
+                : emailNotice.type === "info"
+                ? "Email Dispatching:"
+                : "Email Notice:"}
+            </strong>{" "}
+            {emailNotice.message}
+          </span>
+          <button
+            type="button"
+            onClick={() => setEmailNotice(null)}
+            style={{
+              background: "none",
+              border: "none",
+              color: "inherit",
+              cursor: "pointer",
+              fontSize: "1.2rem",
+              padding: "0 6px",
+              lineHeight: 1,
+            }}
+            title="Dismiss notice"
+          >
+            ×
+          </button>
+        </div>
+      )}
+
       <main className="dashboard-grid">
         <div className="primary-column">
           <VideoViewport
@@ -400,8 +708,11 @@ export function App() {
             inferenceTimeMs={inferenceTimeMs}
             roundTripTimeMs={roundTripTimeMs}
             videoDimensions={videoDimensions}
-            hasMetrics={hasMetrics}
-            onShowMetrics={() => setIsMetricsModalOpen(true)}
+            hasMetrics={hasMetrics || Boolean(latestMetricsRef.current)}
+            onShowMetrics={() => {
+              setMetricsModalTab("metrics");
+              setIsMetricsModalOpen(true);
+            }}
             onStartCamera={startCamera}
             onStopCamera={handleStopCamera}
             onToggleDetection={toggleDetection}
@@ -410,6 +721,7 @@ export function App() {
 
         <div className="secondary-column">
           <DetectionList
+            ref={detectionListRef}
             supportedClasses={supportedClasses}
             selectedClasses={selectedClasses}
             onSelectClasses={setSelectedClasses}
@@ -434,18 +746,24 @@ export function App() {
       <MetricsModal
         isOpen={isMetricsModalOpen}
         onClose={() => setIsMetricsModalOpen(false)}
-        metrics={completedMetrics}
+        metrics={completedMetrics || latestMetricsRef.current}
+        activeTab={metricsModalTab}
+        isCopiedExternal={copiedSummaryTick}
       />
 
       <ChatCopilot
         cameraStatus={cameraStatus}
         isDetecting={isDetecting}
         confidence={confidence}
+        similarityThreshold={similarityThreshold}
         selectedClasses={selectedClasses}
         customItems={customItems}
         selectedCustomIds={selectedCustomIds}
         isGuarded={isGuarded}
+        hasMetrics={hasMetrics || Boolean(latestMetricsRef.current)}
         supportedClasses={supportedClasses}
+        isMetricsModalOpen={isMetricsModalOpen}
+        metricsModalTab={metricsModalTab}
         onExecuteActions={handleExecuteCopilotActions}
         onCaptureLiveSnapshot={captureLiveSnapshotFile}
       />
