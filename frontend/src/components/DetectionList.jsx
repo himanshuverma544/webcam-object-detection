@@ -271,11 +271,11 @@ export const DetectionList = React.forwardRef(function DetectionList(
         prev.map((p, idx) =>
           idx === currentModal.editIndex
             ? {
-                ...p,
-                ...updated,
-                isExisting: p.isExisting,
-                existingFileName: p.existingFileName,
-              }
+              ...p,
+              ...updated,
+              isExisting: p.isExisting,
+              existingFileName: p.existingFileName,
+            }
             : p
         )
       );
@@ -866,10 +866,10 @@ export const DetectionList = React.forwardRef(function DetectionList(
                   ? "Updating Custom Item..."
                   : "Indexing Visual Prompt..."
                 : editingItem
-                ? `Update Item (${stagedPhotos.length} ${stagedPhotos.length === 1 ? "photo" : "photos"})`
-                : stagedPhotos.length > 0
-                ? `Save & Detect Item (${stagedPhotos.length} ${stagedPhotos.length === 1 ? "photo" : "photos"})`
-                : "Save & Detect Item"}
+                  ? `Update Item (${stagedPhotos.length} ${stagedPhotos.length === 1 ? "photo" : "photos"})`
+                  : stagedPhotos.length > 0
+                    ? `Save & Detect Item (${stagedPhotos.length} ${stagedPhotos.length === 1 ? "photo" : "photos"})`
+                    : "Save & Detect Item"}
             </button>
           </form>
 
