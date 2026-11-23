@@ -203,6 +203,39 @@ class CustomItemOut(BaseModel):
     created_at: str = Field(..., description="ISO-8601 UTC creation timestamp")
 
 
+class CustomItemPhotoOut(BaseModel):
+    """Details and preview URLs for a single reference photo indexed in a custom item."""
+
+    file_name: str = Field(..., description="Saved image file name on disk")
+    image_data_url: str = Field(..., description="Base64 JPEG data URL of the full reference photo")
+    cropped_data_url: Optional[str] = Field(
+        default=None,
+        description="Base64 JPEG data URL of the cropped foreground object",
+    )
+    bbox_norm: List[float] = Field(
+        ...,
+        description="Normalized [x1, y1, x2, y2] bounding box within [0.0, 1.0]",
+    )
+
+
+class CustomItemDetailOut(BaseModel):
+    """Complete detail of a custom reference item including all indexed reference photos."""
+
+    id: str = Field(..., description="Unique custom item identifier", examples=["item_a1b2c3d4"])
+    name: str = Field(..., description="User-assigned item name", examples=["My Office Chair"])
+    class_id: int = Field(..., ge=1000, description="Assigned custom class ID (>= 1000)")
+    image_count: int = Field(..., ge=1, description="Number of reference photos indexed for this item")
+    thumbnail_base64: str = Field(
+        ...,
+        description="Base64 JPEG data URL preview of the item's primary reference image",
+    )
+    created_at: str = Field(..., description="ISO-8601 UTC creation timestamp")
+    photos: List[CustomItemPhotoOut] = Field(
+        default_factory=list,
+        description="List of all indexed reference photos with their crops and data URLs",
+    )
+
+
 class CustomItemsListResponse(BaseModel):
     """List of registered custom reference items."""
 

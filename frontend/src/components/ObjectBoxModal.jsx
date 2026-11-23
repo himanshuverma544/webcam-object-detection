@@ -355,7 +355,9 @@ export function ObjectBoxModal({ isOpen, items = [], onCancel, onConfirm }) {
                 height: `${(by2 - by1) * 100}%`,
               }}
             >
-              <span className="box-selection-tag">Target Object</span>
+              <span className={`box-selection-tag ${by1 < 0.08 ? "tag-below" : "tag-above"}`}>
+                Target Object
+              </span>
               <span
                 className="box-corner-handle handle-nw"
                 onPointerDown={(e) => handleCornerPointerDown("nw", e)}

@@ -370,6 +370,85 @@ export async function addCustomItemImages(itemId, files, bboxes = null) {
 }
 
 /**
+ * Fetch complete detail for a single custom item including all reference photos.
+ * @param {string} itemId
+ */
+export async function fetchCustomItemDetail(itemId) {
+  let response;
+  try {
+    response = await fetch(
+      `${API_BASE_URL}/custom-items/${encodeURIComponent(itemId)}`,
+      {
+        method: "GET",
+        headers: { Accept: "application/json" },
+      }
+    );
+  } catch (err) {
+    throw new ApiError(
+      `Cannot reach backend at ${API_BASE_URL}. Ensure the server is running.`,
+      0
+    );
+  }
+
+  if (!response.ok) {
+    const detail = await parseErrorMessage(response);
+    throw new ApiError(detail, response.status);
+  }
+
+  return response.json();
+}
+
+/**
+ * Update an existing custom item (name, retained photos, new files).
+ * @param {string} itemId
+ * @param {Object} options
+ * @param {string} [options.name]
+ * @param {Array<{file_name: string, bbox_norm: number[]}>} [options.retainedPhotos]
+ * @param {File[]} [options.newFiles]
+ * @param {Array<number[]>} [options.newBboxes]
+ */
+export async function updateCustomItem(itemId, { name, retainedPhotos = null, newFiles = [], newBboxes = null }) {
+  const formData = new FormData();
+  if (name) {
+    formData.append("name", name);
+  }
+  if (Array.isArray(retainedPhotos)) {
+    formData.append("retained_photos", JSON.stringify(retainedPhotos));
+  }
+  if (Array.isArray(newFiles)) {
+    for (const f of newFiles) {
+      formData.append("files", f);
+    }
+  }
+  if (Array.isArray(newBboxes) && newBboxes.length > 0) {
+    formData.append("bboxes", JSON.stringify(newBboxes));
+  }
+
+  let response;
+  try {
+    response = await fetch(
+      `${API_BASE_URL}/custom-items/${encodeURIComponent(itemId)}`,
+      {
+        method: "PUT",
+        body: formData,
+      }
+    );
+  } catch (err) {
+    throw new ApiError(
+      `Cannot reach backend at ${API_BASE_URL}. Ensure the server is running.`,
+      0
+    );
+  }
+
+  if (!response.ok) {
+    const detail = await parseErrorMessage(response);
+    throw new ApiError(detail, response.status);
+  }
+
+  return response.json();
+}
+
+/**
  * Delete a saved custom reference item by ID.
  * @param {string} itemId
  */

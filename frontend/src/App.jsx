@@ -46,6 +46,8 @@ export function App() {
     setCustomItemError,
     uploadCustomItem,
     addImagesToCustomItem,
+    editCustomItem,
+    fetchCustomItemDetail,
     removeCustomItem,
     toggleCustomItem,
     refreshCustomItems,
@@ -731,6 +733,8 @@ export function App() {
             onToggleCustomItem={toggleCustomItem}
             onUploadCustomItem={uploadCustomItem}
             onAddCustomItemImages={addImagesToCustomItem}
+            onUpdateCustomItem={editCustomItem}
+            onFetchCustomItemDetail={fetchCustomItemDetail}
             onDeleteCustomItem={removeCustomItem}
             similarityThreshold={similarityThreshold}
             onSimilarityChange={setSimilarityThreshold}

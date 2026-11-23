@@ -39,7 +39,7 @@ export function ChatCopilot({
   cameraStatus,
   isDetecting,
   confidence,
-  similarityThreshold = 0.65,
+  similarityThreshold = 0.60,
   selectedClasses,
   customItems,
   selectedCustomIds,

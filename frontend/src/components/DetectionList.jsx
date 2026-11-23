@@ -3,6 +3,7 @@ import {
   FiCamera,
   FiCheck,
   FiCrop,
+  FiEdit2,
   FiImage,
   FiPlus,
   FiSearch,
@@ -82,8 +83,10 @@ export const DetectionList = React.forwardRef(function DetectionList(
     onToggleCustomItem,
     onUploadCustomItem,
     onAddCustomItemImages,
+    onUpdateCustomItem,
+    onFetchCustomItemDetail,
     onDeleteCustomItem,
-    similarityThreshold = 0.65,
+    similarityThreshold = 0.60,
     onSimilarityChange,
     isUploadingCustom = false,
     customItemError = null,
@@ -96,11 +99,13 @@ export const DetectionList = React.forwardRef(function DetectionList(
   const [activeTab, setActiveTab] = useState("coco"); // 'coco' | 'custom'
   const [searchQuery, setSearchQuery] = useState("");
 
-  // Custom item upload form state
+  // Custom item upload / edit form state
   const [itemName, setItemName] = useState("");
-  const [stagedPhotos, setStagedPhotos] = useState([]); // [{ file, previewUrl, croppedPreviewUrl, bboxNorm }]
+  const [stagedPhotos, setStagedPhotos] = useState([]); // [{ file, previewUrl, croppedPreviewUrl, bboxNorm, isExisting, existingFileName }]
   const [localFormError, setLocalFormError] = useState(null);
   const [boxModalState, setBoxModalState] = useState(null);
+  const [editingItem, setEditingItem] = useState(null); // { id, name } or null
+  const [isLoadingDetail, setIsLoadingDetail] = useState(false);
   const nameInputRef = useRef(null);
   const fileInputRef = useRef(null);
   const addAngleInputRef = useRef(null);
@@ -253,14 +258,26 @@ export const DetectionList = React.forwardRef(function DetectionList(
     }
 
     if (currentModal.mode === "stage") {
-      setStagedPhotos((prev) => [...prev, ...results]);
+      setStagedPhotos((prev) => [
+        ...prev,
+        ...results.map((r) => ({ ...r, isExisting: false })),
+      ]);
       return;
     }
 
     if (currentModal.mode === "edit" && typeof currentModal.editIndex === "number") {
       const updated = results[0];
       setStagedPhotos((prev) =>
-        prev.map((p, idx) => (idx === currentModal.editIndex ? updated : p))
+        prev.map((p, idx) =>
+          idx === currentModal.editIndex
+            ? {
+                ...p,
+                ...updated,
+                isExisting: p.isExisting,
+                existingFileName: p.existingFileName,
+              }
+            : p
+        )
       );
       return;
     }
@@ -283,7 +300,7 @@ export const DetectionList = React.forwardRef(function DetectionList(
   const handleRemoveStaged = (idx) => {
     setStagedPhotos((prev) => {
       const target = prev[idx];
-      if (target?.previewUrl) {
+      if (target?.previewUrl && !target.isExisting) {
         URL.revokeObjectURL(target.previewUrl);
       }
       return prev.filter((_, i) => i !== idx);
@@ -302,7 +319,58 @@ export const DetectionList = React.forwardRef(function DetectionList(
     }
   };
 
-  const handleCreateCustomItem = async (e) => {
+  const handleStartEditItem = async (item, e) => {
+    e?.stopPropagation();
+    setLocalFormError(null);
+    if (onClearCustomError) onClearCustomError(null);
+
+    setActiveTab("custom");
+    setEditingItem(item);
+    setItemName(item.name);
+
+    stagedPhotos.forEach((p) => {
+      if (!p.isExisting && p.previewUrl) URL.revokeObjectURL(p.previewUrl);
+    });
+    setStagedPhotos([]);
+
+    if (onFetchCustomItemDetail) {
+      setIsLoadingDetail(true);
+      try {
+        const detail = await onFetchCustomItemDetail(item.id);
+        if (detail && Array.isArray(detail.photos)) {
+          const loadedPhotos = detail.photos.map((ph) => ({
+            existingFileName: ph.file_name,
+            previewUrl: ph.image_data_url,
+            croppedPreviewUrl: ph.cropped_data_url || ph.image_data_url,
+            bboxNorm: ph.bbox_norm,
+            isExisting: true,
+          }));
+          setStagedPhotos(loadedPhotos);
+        }
+      } catch (err) {
+        setLocalFormError(err.message || "Failed to load reference photos for this item.");
+      } finally {
+        setIsLoadingDetail(false);
+      }
+    }
+
+    setTimeout(() => {
+      nameInputRef.current?.focus();
+    }, 60);
+  };
+
+  const handleCancelEdit = () => {
+    setEditingItem(null);
+    setItemName("");
+    stagedPhotos.forEach((p) => {
+      if (!p.isExisting && p.previewUrl) URL.revokeObjectURL(p.previewUrl);
+    });
+    setStagedPhotos([]);
+    setLocalFormError(null);
+    if (onClearCustomError) onClearCustomError(null);
+  };
+
+  const handleSubmitCustomItem = async (e) => {
     e.preventDefault();
     const cleaned = itemName.trim();
     if (!cleaned) {
@@ -310,6 +378,54 @@ export const DetectionList = React.forwardRef(function DetectionList(
       nameInputRef.current?.focus();
       return;
     }
+
+    if (stagedPhotos.length === 0) {
+      setLocalFormError("Please keep or upload at least 1 reference photo of your item.");
+      return;
+    }
+
+    setLocalFormError(null);
+    if (onClearCustomError) onClearCustomError(null);
+
+    if (editingItem) {
+      // EDIT MODE: Update existing item photos and name
+      const isDuplicate = customItems.some(
+        (it) => it.id !== editingItem.id && it.name.trim().toLowerCase() === cleaned.toLowerCase()
+      );
+      if (isDuplicate) {
+        setLocalFormError(`A custom item named '${cleaned}' already exists. Please choose a unique name.`);
+        nameInputRef.current?.focus();
+        return;
+      }
+
+      const retainedPhotos = stagedPhotos
+        .filter((p) => p.isExisting && p.existingFileName)
+        .map((p) => ({
+          file_name: p.existingFileName,
+          bbox_norm: p.bboxNorm,
+        }));
+
+      const newItems = stagedPhotos.filter((p) => !p.isExisting && p.file);
+      const newFiles = newItems.map((p) => p.file);
+      const newBboxes = newItems.map((p) => p.bboxNorm);
+
+      try {
+        if (onUpdateCustomItem) {
+          await onUpdateCustomItem(editingItem.id, {
+            name: cleaned,
+            retainedPhotos,
+            newFiles,
+            newBboxes,
+          });
+        }
+        handleCancelEdit();
+      } catch (err) {
+        setLocalFormError(err.message || "Failed to update custom item.");
+      }
+      return;
+    }
+
+    // CREATE MODE: Register new item
     const isDuplicate = customItems.some(
       (it) => it.name.trim().toLowerCase() === cleaned.toLowerCase()
     );
@@ -318,13 +434,6 @@ export const DetectionList = React.forwardRef(function DetectionList(
       nameInputRef.current?.focus();
       return;
     }
-    if (stagedPhotos.length === 0) {
-      setLocalFormError("Please upload at least 1 reference photo of your item.");
-      fileInputRef.current?.click();
-      return;
-    }
-    setLocalFormError(null);
-    if (onClearCustomError) onClearCustomError(null);
 
     try {
       await onUploadCustomItem(
@@ -332,7 +441,9 @@ export const DetectionList = React.forwardRef(function DetectionList(
         stagedPhotos.map((p) => p.file),
         stagedPhotos.map((p) => p.bboxNorm)
       );
-      stagedPhotos.forEach((p) => URL.revokeObjectURL(p.previewUrl));
+      stagedPhotos.forEach((p) => {
+        if (!p.isExisting && p.previewUrl) URL.revokeObjectURL(p.previewUrl);
+      });
       setStagedPhotos([]);
       setItemName("");
       if (fileInputRef.current) {
@@ -344,11 +455,35 @@ export const DetectionList = React.forwardRef(function DetectionList(
   };
 
   const triggerAddAngle = (itemId, e) => {
-    e.stopPropagation();
+    e?.stopPropagation();
     addAngleTargetIdRef.current = itemId;
     if (addAngleInputRef.current) {
       addAngleInputRef.current.value = "";
       addAngleInputRef.current.click();
+    }
+  };
+
+  const handleSnapAngleFromCamera = async (itemId, e) => {
+    e?.stopPropagation();
+    if (!itemId || !onCaptureLiveSnapshot) return;
+    setLocalFormError(null);
+    if (onClearCustomError) onClearCustomError(null);
+    try {
+      const snapFile = await onCaptureLiveSnapshot();
+      const normalized = await normalizeImageFile(snapFile);
+      const prepared = [
+        {
+          file: normalized,
+          previewUrl: URL.createObjectURL(normalized),
+        },
+      ];
+      setBoxModalState({
+        mode: "addAngle",
+        targetItemId: itemId,
+        items: prepared,
+      });
+    } catch (err) {
+      setLocalFormError(err.message || "Could not capture snapshot from camera.");
     }
   };
 
@@ -589,8 +724,33 @@ export const DetectionList = React.forwardRef(function DetectionList(
             </div>
           </div>
 
-          {/* Add Custom Item Form */}
-          <form className="custom-upload-form" onSubmit={handleCreateCustomItem}>
+          {/* Add / Edit Custom Item Form */}
+          <form className="custom-upload-form" onSubmit={handleSubmitCustomItem}>
+            {editingItem && (
+              <div className="custom-editing-banner">
+                <div className="editing-banner-info">
+                  <FiEdit2 aria-hidden="true" />
+                  <span>
+                    Editing: <strong>{editingItem.name}</strong>
+                  </span>
+                </div>
+                <button
+                  type="button"
+                  className="btn-cancel-edit"
+                  onClick={handleCancelEdit}
+                  title="Cancel editing and create a new item"
+                >
+                  <FiX aria-hidden="true" /> Cancel
+                </button>
+              </div>
+            )}
+
+            {isLoadingDetail && (
+              <div className="custom-loading-detail-hint">
+                Loading saved reference photos...
+              </div>
+            )}
+
             <input
               ref={nameInputRef}
               type="text"
@@ -687,16 +847,6 @@ export const DetectionList = React.forwardRef(function DetectionList(
                     </button>
                   </div>
                 ))}
-                <button
-                  type="button"
-                  className="staged-thumb-add-btn"
-                  onClick={() => fileInputRef.current?.click()}
-                  disabled={isUploadingCustom}
-                  title="Add more reference photos"
-                  aria-label="Add more reference photos"
-                >
-                  <FiPlus />
-                </button>
               </div>
             )}
 
@@ -712,7 +862,11 @@ export const DetectionList = React.forwardRef(function DetectionList(
               disabled={isUploadingCustom || stagedPhotos.length === 0}
             >
               {isUploadingCustom
-                ? "Indexing Visual Prompt..."
+                ? editingItem
+                  ? "Updating Custom Item..."
+                  : "Indexing Visual Prompt..."
+                : editingItem
+                ? `Update Item (${stagedPhotos.length} ${stagedPhotos.length === 1 ? "photo" : "photos"})`
                 : stagedPhotos.length > 0
                 ? `Save & Detect Item (${stagedPhotos.length} ${stagedPhotos.length === 1 ? "photo" : "photos"})`
                 : "Save & Detect Item"}
@@ -802,19 +956,23 @@ export const DetectionList = React.forwardRef(function DetectionList(
                       <div className="custom-item-card-actions">
                         <button
                           type="button"
-                          className="btn-custom-icon"
-                          onClick={(e) => triggerAddAngle(item.id, e)}
+                          className={`btn-custom-icon ${editingItem?.id === item.id ? "btn-edit-active" : ""}`}
+                          onClick={(e) => handleStartEditItem(item, e)}
                           disabled={isUploadingCustom}
-                          title="Add another angle photo to improve accuracy"
-                          aria-label={`Add angle photo for ${item.name}`}
+                          title={`Edit ${item.name} reference photos & details`}
+                          aria-label={`Edit ${item.name}`}
                         >
-                          <FiPlus />
+                          <FiEdit2 />
                         </button>
+
                         <button
                           type="button"
                           className="btn-custom-icon btn-custom-delete"
                           onClick={(e) => {
                             e.stopPropagation();
+                            if (editingItem?.id === item.id) {
+                              handleCancelEdit();
+                            }
                             if (onDeleteCustomItem) onDeleteCustomItem(item.id);
                           }}
                           title={`Delete ${item.name}`}

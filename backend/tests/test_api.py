@@ -538,6 +538,48 @@ class _FakeCustomDetector:
         self.last_bboxes = bboxes_norm
         return updated
 
+    def get_item_detail(self, item_id: str):
+        if item_id not in self._items:
+            raise KeyError(f"Custom item '{item_id}' not found.")
+        old = self._items[item_id]
+        from app.schemas.detection import CustomItemDetailOut, CustomItemPhotoOut
+
+        return CustomItemDetailOut(
+            id=old.id,
+            name=old.name,
+            class_id=old.class_id,
+            image_count=old.image_count,
+            thumbnail_base64=old.thumbnail_base64,
+            created_at=old.created_at,
+            photos=[
+                CustomItemPhotoOut(
+                    file_name="fake_0.jpg",
+                    image_data_url="data:image/jpeg;base64,/9j/4AAQ",
+                    cropped_data_url="data:image/jpeg;base64,/9j/4AAQ",
+                    bbox_norm=[0.1, 0.1, 0.9, 0.9],
+                )
+            ],
+        )
+
+    def update_item(
+        self,
+        item_id: str,
+        name=None,
+        retained_photos=None,
+        new_image_bytes_list=None,
+        new_bboxes_norm=None,
+    ):
+        if item_id not in self._items:
+            raise KeyError(f"Custom item '{item_id}' not found.")
+        old = self._items[item_id]
+        new_name = name or old.name
+        count = len(retained_photos or []) + len(new_image_bytes_list or [])
+        updated = old.model_copy(
+            update={"name": new_name, "image_count": max(1, count)}
+        )
+        self._items[item_id] = updated
+        return updated
+
     def delete_item(self, item_id: str) -> bool:
         return self._items.pop(item_id, None) is not None
 
@@ -597,6 +639,21 @@ def test_custom_items_crud_endpoints(
     )
     assert res_add.status_code == 200
     assert res_add.json()["image_count"] == 2
+
+    # Test GET /custom-items/{id} detail
+    res_detail = client.get(f"/custom-items/{created['id']}")
+    assert res_detail.status_code == 200
+    detail_data = res_detail.json()
+    assert detail_data["name"] == "My Office Chair"
+    assert len(detail_data["photos"]) >= 1
+
+    # Test PUT /custom-items/{id} update
+    res_update = client.put(
+        f"/custom-items/{created['id']}",
+        data={"name": "Executive Office Chair", "retained_photos": '[{"file_name": "fake_0.jpg", "bbox_norm": [0.1, 0.1, 0.8, 0.8]}]'},
+    )
+    assert res_update.status_code == 200
+    assert res_update.json()["name"] == "Executive Office Chair"
 
     res_del = client.delete(f"/custom-items/{created['id']}")
     assert res_del.status_code == 200

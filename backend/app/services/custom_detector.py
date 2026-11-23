@@ -20,7 +20,13 @@ import numpy as np
 import torch
 import torch.nn.functional as F
 
-from app.schemas.detection import AutoBoxResponse, CustomItemOut, DetectionItem
+from app.schemas.detection import (
+    AutoBoxResponse,
+    CustomItemDetailOut,
+    CustomItemOut,
+    CustomItemPhotoOut,
+    DetectionItem,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -32,8 +38,8 @@ CUSTOM_CLASS_ID_BASE = 1000
 CUSTOM_TRACK_ID_OFFSET = 10000
 MAX_REF_SIDE_PX = 1024
 DEFAULT_BBOX_NORM = [0.03, 0.03, 0.97, 0.97]
-MAX_LIVE_BOX_AREA_RATIO = 0.82
-BG_CONTRAST_MARGIN = 0.06
+MAX_LIVE_BOX_AREA_RATIO = 0.88
+BG_CONTRAST_MARGIN = 0.05
 
 
 def _sanitize_bbox_norm(bbox: Optional[Sequence[float]]) -> List[float]:
@@ -262,6 +268,43 @@ class CustomItemRecord:
             created_at=self.created_at,
         )
 
+    def to_detail_schema(self, storage_dir: Path) -> CustomItemDetailOut:
+        photos: List[CustomItemPhotoOut] = []
+        for idx, fname in enumerate(self.image_files):
+            fpath = storage_dir / fname
+            if not fpath.exists():
+                continue
+            box = self.image_bboxes[idx] if idx < len(self.image_bboxes) else list(DEFAULT_BBOX_NORM)
+            try:
+                raw_bytes = fpath.read_bytes()
+                b64 = base64.b64encode(raw_bytes).decode("ascii")
+                img_data_url = f"data:image/jpeg;base64,{b64}"
+
+                img_bgr = cv2.imread(str(fpath), cv2.IMREAD_COLOR)
+                crop = _crop_by_norm_bbox(img_bgr, box) if img_bgr is not None else None
+                crop_data_url = _make_thumbnail_data_url(crop, size=240) if crop is not None else None
+
+                photos.append(
+                    CustomItemPhotoOut(
+                        file_name=fname,
+                        image_data_url=img_data_url,
+                        cropped_data_url=crop_data_url,
+                        bbox_norm=_sanitize_bbox_norm(box),
+                    )
+                )
+            except Exception as exc:
+                logger.warning("Failed to prepare photo detail for %s: %s", fname, exc)
+
+        return CustomItemDetailOut(
+            id=self.id,
+            name=self.name,
+            class_id=self.class_id,
+            image_count=len(self.image_files),
+            thumbnail_base64=self.thumbnail_base64,
+            created_at=self.created_at,
+            photos=photos,
+        )
+
 
 def _decode_bgr_image(image_bytes: bytes) -> np.ndarray:
     """Decode raw bytes to OpenCV BGR numpy array, raising ValueError if invalid."""
@@ -337,11 +380,369 @@ def _prep_crop_tensor(img_bgr: np.ndarray) -> np.ndarray:
     return np.transpose(arr, (2, 0, 1))  # CHW
 
 
+def _rotate_crop(crop: np.ndarray, angle_deg: float) -> Optional[np.ndarray]:
+    """Rotate an image crop by angle_deg degrees with expanded canvas and reflection padding."""
+    if crop is None or crop.size == 0:
+        return None
+    h, w = crop.shape[:2]
+    center = (w / 2.0, h / 2.0)
+    rot_mat = cv2.getRotationMatrix2D(center, angle_deg, 1.0)
+    cos = np.abs(rot_mat[0, 0])
+    sin = np.abs(rot_mat[0, 1])
+    new_w = max(16, int((h * sin) + (w * cos)))
+    new_h = max(16, int((h * cos) + (w * sin)))
+    rot_mat[0, 2] += (new_w / 2.0) - center[0]
+    rot_mat[1, 2] += (new_h / 2.0) - center[1]
+    try:
+        return cv2.warpAffine(
+            crop, rot_mat, (new_w, new_h), borderMode=cv2.BORDER_REFLECT_101
+        )
+    except Exception:
+        return None
+
+
+def _generate_multiscale_augmented_crops(crop_bgr: np.ndarray) -> List[np.ndarray]:
+    """
+    Generate realistic multi-scale, blur, lighting, mirror, and rotation variants of a foreground crop
+    so the object matches whether it is far away (low-res/blurry), close up (zoomed),
+    rotated at an angle, mirrored, or under varied ambient lighting.
+    """
+    if crop_bgr is None or crop_bgr.size == 0:
+        return []
+
+    h, w = crop_bgr.shape[:2]
+    variants: List[np.ndarray] = [crop_bgr]
+
+    # 1. Far-distance simulations (low-res downsampling + upsampling back to crop size)
+    # Simulates camera pixel loss and optical softening when moving far away
+    for scale in (0.35, 0.60):
+        dw = max(16, int(round(w * scale)))
+        dh = max(16, int(round(h * scale)))
+        try:
+            small = cv2.resize(crop_bgr, (dw, dh), interpolation=cv2.INTER_AREA)
+            sim_far = cv2.resize(small, (w, h), interpolation=cv2.INTER_LINEAR)
+            variants.append(sim_far)
+        except Exception:
+            pass
+
+    # 2. Close-up / Partial view simulation (center crop 85% and 75%)
+    for crop_ratio in (0.85, 0.75):
+        if h >= 32 and w >= 32:
+            cy1 = int(round(h * (1.0 - crop_ratio) / 2.0))
+            cy2 = int(round(h * (1.0 + crop_ratio) / 2.0))
+            cx1 = int(round(w * (1.0 - crop_ratio) / 2.0))
+            cx2 = int(round(w * (1.0 + crop_ratio) / 2.0))
+            sub_crop = crop_bgr[cy1:cy2, cx1:cx2]
+            if sub_crop.size > 0:
+                variants.append(sub_crop)
+
+    # 3. Motion / Defocus blur (common when moving object in front of webcam)
+    if h >= 16 and w >= 16:
+        try:
+            blurred = cv2.GaussianBlur(crop_bgr, (5, 5), 1.2)
+            variants.append(blurred)
+        except Exception:
+            pass
+
+    # 4. Ambient illumination shifts (simulates moving closer/further from room lights)
+    try:
+        bright = cv2.convertScaleAbs(crop_bgr, alpha=1.12, beta=10)
+        dark = cv2.convertScaleAbs(crop_bgr, alpha=0.88, beta=-10)
+        variants.append(bright)
+        variants.append(dark)
+    except Exception:
+        pass
+
+    # 5. Horizontal Flip (Mirroring)
+    try:
+        flipped = cv2.flip(crop_bgr, 1)
+        variants.append(flipped)
+    except Exception:
+        pass
+
+    # 6. Orthogonal Rotations (90 deg, 180 deg, 270 deg)
+    try:
+        rot90 = cv2.rotate(crop_bgr, cv2.ROTATE_90_CLOCKWISE)
+        rot180 = cv2.rotate(crop_bgr, cv2.ROTATE_180)
+        rot270 = cv2.rotate(crop_bgr, cv2.ROTATE_90_COUNTERCLOCKWISE)
+        variants.extend([rot90, rot180, rot270])
+    except Exception:
+        pass
+
+    # 7. Subtle Handheld Tilts (+/-15 deg, +/-30 deg)
+    for angle in (-30.0, -15.0, 15.0, 30.0):
+        tilted = _rotate_crop(crop_bgr, angle)
+        if tilted is not None and tilted.size > 0:
+            variants.append(tilted)
+
+    return variants
+
+
+def _generate_multiscale_vpe_samples(
+    img_bgr: np.ndarray, bbox_norm: Sequence[float]
+) -> List[Tuple[np.ndarray, List[float]]]:
+    """
+    Synthesize multi-scale variations of an image + bounding box prompt
+    (original, far distance simulation, close-up simulation, mirror simulation)
+    for scale- and orientation-invariant YOLOE VPE.
+    """
+    x1, y1, x2, y2 = _sanitize_bbox_norm(bbox_norm)
+    h, w = img_bgr.shape[:2]
+    samples: List[Tuple[np.ndarray, List[float]]] = [(img_bgr, [x1, y1, x2, y2])]
+
+    # 1. Far distance simulation: scale the scene down to 55% on a padded canvas
+    try:
+        scale_far = 0.55
+        new_w = max(32, int(round(w * scale_far)))
+        new_h = max(32, int(round(h * scale_far)))
+        scaled_img = cv2.resize(img_bgr, (new_w, new_h), interpolation=cv2.INTER_AREA)
+
+        off_x = (w - new_w) // 2
+        off_y = (h - new_h) // 2
+        canvas = cv2.copyMakeBorder(
+            scaled_img,
+            off_y,
+            h - new_h - off_y,
+            off_x,
+            w - new_w - off_x,
+            cv2.BORDER_REFLECT_101,
+        )
+        far_box = [
+            (off_x + x1 * new_w) / float(w),
+            (off_y + y1 * new_h) / float(h),
+            (off_x + x2 * new_w) / float(w),
+            (off_y + y2 * new_h) / float(h),
+        ]
+        samples.append((canvas, _sanitize_bbox_norm(far_box)))
+    except Exception as exc:
+        logger.debug("Far-scale VPE synthesis skipped: %s", exc)
+
+    # 2. Close-up simulation: zoom into the bounding box with 15% margin
+    try:
+        bw = x2 - x1
+        bh = y2 - y1
+        if bw < 0.75 or bh < 0.75:
+            pad_x = bw * 0.15
+            pad_y = bh * 0.15
+            zx1 = max(0.0, x1 - pad_x)
+            zy1 = max(0.0, y1 - pad_y)
+            zx2 = min(1.0, x2 + pad_x)
+            zy2 = min(1.0, y2 + pad_y)
+
+            px1, py1, px2, py2 = _norm_bbox_to_px([zx1, zy1, zx2, zy2], w, h)
+            sub_scene = img_bgr[py1:py2, px1:px2]
+            if sub_scene.shape[0] >= 32 and sub_scene.shape[1] >= 32:
+                zoomed_scene = cv2.resize(sub_scene, (w, h), interpolation=cv2.INTER_LINEAR)
+                sub_w = float(px2 - px1)
+                sub_h = float(py2 - py1)
+                orig_px1, orig_py1, orig_px2, orig_py2 = _norm_bbox_to_px([x1, y1, x2, y2], w, h)
+                close_box = [
+                    (orig_px1 - px1) / sub_w,
+                    (orig_py1 - py1) / sub_h,
+                    (orig_px2 - px1) / sub_w,
+                    (orig_py2 - py1) / sub_h,
+                ]
+                samples.append((zoomed_scene, _sanitize_bbox_norm(close_box)))
+    except Exception as exc:
+        logger.debug("Close-scale VPE synthesis skipped: %s", exc)
+
+    # 3. Horizontal Flip (Mirroring) simulation for YOLOE VPE
+    try:
+        flipped_img = cv2.flip(img_bgr, 1)
+        flip_box = [1.0 - x2, y1, 1.0 - x1, y2]
+        samples.append((flipped_img, _sanitize_bbox_norm(flip_box)))
+    except Exception as exc:
+        logger.debug("Mirror VPE synthesis skipped: %s", exc)
+
+    return samples
+
+
+@dataclass
+class TrackedCustomState:
+    item_id: str
+    label: str
+    class_id: int
+    smooth_bbox: List[float]  # [x1, y1, x2, y2]
+    confidence: float
+    similarity: float
+    track_id: Optional[int]
+    hit_streak: int = 1
+    miss_streak: int = 0
+    last_seen_t: float = field(default_factory=time.perf_counter)
+
+
+class CustomTemporalSmoother:
+    """
+    Temporal tracker and anti-flicker buffer for custom object detections.
+    Applies:
+      1. Exponential Moving Average (EMA) coordinate smoothing to eliminate high-frequency box jitter.
+      2. Anti-flicker persistence buffer (holds firm detections across 1-2 frame momentary dropouts).
+      3. Smooth confidence and similarity interpolation.
+    """
+
+    def __init__(
+        self,
+        alpha: float = 0.70,
+        max_misses: int = 2,
+        iou_match_thresh: float = 0.30,
+    ) -> None:
+        self.alpha = alpha
+        self.max_misses = max_misses
+        self.iou_match_thresh = iou_match_thresh
+        self._tracks: Dict[str, List[TrackedCustomState]] = {}
+
+    def clear(self) -> None:
+        self._tracks.clear()
+
+    @staticmethod
+    def _compute_iou(b1: Sequence[float], b2: Sequence[float]) -> float:
+        ix1 = max(b1[0], b2[0])
+        iy1 = max(b1[1], b2[1])
+        ix2 = min(b1[2], b2[2])
+        iy2 = min(b1[3], b2[3])
+        iw = max(0.0, ix2 - ix1)
+        ih = max(0.0, iy2 - iy1)
+        inter = iw * ih
+        area1 = max(0.0, (b1[2] - b1[0]) * (b1[3] - b1[1]))
+        area2 = max(0.0, (b2[2] - b2[0]) * (b2[3] - b2[1]))
+        union = area1 + area2 - inter
+        return inter / union if union > 1e-6 else 0.0
+
+    def update(
+        self,
+        raw_detections: List[DetectionItem],
+        active_item_ids: Sequence[str],
+    ) -> List[DetectionItem]:
+        active_set = set(active_item_ids)
+        self._tracks = {iid: trs for iid, trs in self._tracks.items() if iid in active_set}
+
+        now = time.perf_counter()
+        smoothed_results: List[DetectionItem] = []
+
+        raw_by_item: Dict[str, List[DetectionItem]] = {}
+        for det in raw_detections:
+            iid = det.custom_item_id or str(det.class_id)
+            raw_by_item.setdefault(iid, []).append(det)
+
+        for iid in active_set:
+            existing_tracks = self._tracks.get(iid, [])
+            incoming_dets = raw_by_item.get(iid, [])
+
+            matched_track_indices = set()
+            matched_det_indices = set()
+
+            # Greedy IoU bipartite matching between existing tracks and incoming raw detections
+            matches: List[Tuple[float, int, int]] = []
+            for t_idx, track in enumerate(existing_tracks):
+                for d_idx, det in enumerate(incoming_dets):
+                    iou = self._compute_iou(track.smooth_bbox, det.bbox)
+                    if iou >= self.iou_match_thresh:
+                        matches.append((iou, t_idx, d_idx))
+
+            matches.sort(key=lambda m: m[0], reverse=True)
+            for iou, t_idx, d_idx in matches:
+                if t_idx in matched_track_indices or d_idx in matched_det_indices:
+                    continue
+                matched_track_indices.add(t_idx)
+                matched_det_indices.add(d_idx)
+
+                track = existing_tracks[t_idx]
+                det = incoming_dets[d_idx]
+
+                new_b = det.bbox
+                old_b = track.smooth_bbox
+                sm_box = [
+                    round(self.alpha * new_b[0] + (1.0 - self.alpha) * old_b[0], 2),
+                    round(self.alpha * new_b[1] + (1.0 - self.alpha) * old_b[1], 2),
+                    round(self.alpha * new_b[2] + (1.0 - self.alpha) * old_b[2], 2),
+                    round(self.alpha * new_b[3] + (1.0 - self.alpha) * old_b[3], 2),
+                ]
+                sm_conf = round(self.alpha * det.confidence + (1.0 - self.alpha) * track.confidence, 4)
+                det_sim = det.similarity if det.similarity is not None else det.confidence
+                sm_sim = round(self.alpha * det_sim + (1.0 - self.alpha) * track.similarity, 4)
+
+                track.smooth_bbox = sm_box
+                track.confidence = sm_conf
+                track.similarity = sm_sim
+                track.track_id = det.track_id or track.track_id
+                track.hit_streak += 1
+                track.miss_streak = 0
+                track.last_seen_t = now
+
+                smoothed_results.append(
+                    DetectionItem(
+                        label=det.label,
+                        class_id=det.class_id,
+                        confidence=sm_conf,
+                        bbox=sm_box,
+                        track_id=track.track_id,
+                        is_custom=True,
+                        custom_item_id=det.custom_item_id,
+                        similarity=sm_sim,
+                    )
+                )
+
+            updated_tracks: List[TrackedCustomState] = []
+
+            # 1. Retain matched tracks (already updated with EMA above)
+            for t_idx in matched_track_indices:
+                updated_tracks.append(existing_tracks[t_idx])
+
+            # 2. Existing tracks not matched: apply anti-flicker persistence hold
+            for t_idx, track in enumerate(existing_tracks):
+                if t_idx in matched_track_indices:
+                    continue
+                track.miss_streak += 1
+                # Hold detection if firmly tracked (hit_streak >= 2) and missed for <= max_misses
+                if track.hit_streak >= 2 and track.miss_streak <= self.max_misses:
+                    decayed_conf = round(track.confidence * 0.90, 4)
+                    decayed_sim = round(track.similarity * 0.90, 4)
+                    track.confidence = decayed_conf
+                    track.similarity = decayed_sim
+                    updated_tracks.append(track)
+                    smoothed_results.append(
+                        DetectionItem(
+                            label=track.label,
+                            class_id=track.class_id,
+                            confidence=decayed_conf,
+                            bbox=track.smooth_bbox,
+                            track_id=track.track_id,
+                            is_custom=True,
+                            custom_item_id=track.item_id,
+                            similarity=decayed_sim,
+                        )
+                    )
+
+            # 3. Unmatched incoming detections become new tracks
+            for d_idx, det in enumerate(incoming_dets):
+                if d_idx in matched_det_indices:
+                    continue
+                det_sim = det.similarity if det.similarity is not None else det.confidence
+                new_track = TrackedCustomState(
+                    item_id=iid,
+                    label=det.label,
+                    class_id=det.class_id,
+                    smooth_bbox=list(det.bbox),
+                    confidence=det.confidence,
+                    similarity=det_sim,
+                    track_id=det.track_id,
+                    hit_streak=1,
+                    miss_streak=0,
+                    last_seen_t=now,
+                )
+                updated_tracks.append(new_track)
+                smoothed_results.append(det)
+
+            self._tracks[iid] = updated_tracks
+
+        return smoothed_results
+
+
 class CustomObjectDetector:
     """
     Visual-Prompted Custom Object Detector combining:
       1. Ultralytics YOLOE visual prompt embeddings with exact user-selected foreground boxes
-      2. MobileNetV3-Large + HSV color instance verification on tight object crops
+      2. Meta DINOv2-Small (Vision Foundation Model) + HSV color instance verification on tight object crops
       3. Background-Rejection Guard (foreground vs excluded background contrast + full-frame area cap)
     """
 
@@ -350,7 +751,7 @@ class CustomObjectDetector:
         yoloe_model_path: str = "yoloe-11s-seg.pt",
         storage_dir: str = "data/custom_items",
         preferred_device: str = "auto",
-        default_similarity_threshold: float = 0.65,
+        default_similarity_threshold: float = 0.60,
     ) -> None:
         self._backend_root = Path(__file__).resolve().parents[2]
         self.yoloe_model_path = self._resolve_model_path(yoloe_model_path)
@@ -372,6 +773,11 @@ class CustomObjectDetector:
         # Cache currently active classes on YOLOE to avoid redundant set_classes() calls
         self._active_prompt_signature: Optional[Tuple[str, ...]] = None
         self._prompt_version: int = 0
+
+        # Temporal smoothing & anti-flicker buffer
+        self._smoother = CustomTemporalSmoother(
+            alpha=0.70, max_misses=2, iou_match_thresh=0.30
+        )
 
         self.storage_dir.mkdir(parents=True, exist_ok=True)
         self._load_metadata_from_disk()
@@ -472,7 +878,7 @@ class CustomObjectDetector:
         tmp_path.replace(self._meta_file())
 
     def ensure_models_loaded(self) -> None:
-        """Lazily initialize YOLOE visual-prompt model and MobileNetV3-Large embedder."""
+        """Lazily initialize YOLOE visual-prompt model and DINOv2-Small foundation embedder."""
         with self._lock:
             if self._models_loaded and self._yoloe_model is not None:
                 return
@@ -481,30 +887,57 @@ class CustomObjectDetector:
             self._load_error = None
             try:
                 from ultralytics import YOLOE
-                import torchvision.models as tv_models
+                import timm
+                from timm.layers.pos_embed import resample_abs_pos_embed
 
                 logger.info(
-                    "Loading YOLOE visual-prompt model '%s' and MobileNetV3-Large on '%s'...",
+                    "Loading YOLOE visual-prompt model '%s' and DINOv2-Small foundation embedder on '%s'...",
                     self.yoloe_model_path,
                     self.device,
                 )
                 yoloe = YOLOE(self.yoloe_model_path)
 
-                embedder = tv_models.mobilenet_v3_large(
-                    weights=tv_models.MobileNet_V3_Large_Weights.DEFAULT
+                embedder = timm.create_model(
+                    "vit_small_patch14_dinov2.lvd142m",
+                    pretrained=True,
+                    num_classes=0,
                 )
-                embedder.classifier = torch.nn.Identity()
+                # Resample position embeddings once for 224x224 (16x16 grid = 256 patches)
+                # to avoid runtime interpolation overhead and ensure fast, zero-copy inference.
+                new_pos_embed = resample_abs_pos_embed(
+                    embedder.pos_embed, (16, 16), num_prefix_tokens=embedder.num_prefix_tokens
+                )
+                embedder.pos_embed = torch.nn.Parameter(new_pos_embed)
+                embedder.patch_embed.img_size = (224, 224)
+                embedder.patch_embed.grid_size = (16, 16)
+                embedder.patch_embed.num_patches = 256
                 embedder.eval()
-                try:
-                    embedder = embedder.to(self.device)
-                except Exception as emb_exc:
-                    logger.warning(
-                        "Failed to move embedder to '%s' (%s); using CPU.",
-                        self.device,
-                        emb_exc,
-                    )
-                    self.device = "cpu"
-                    embedder = embedder.to("cpu")
+
+                # On CPU, apply dynamic INT8 quantization for fast, lightweight inference
+                if self.device == "cpu":
+                    try:
+                        embedder = torch.quantization.quantize_dynamic(
+                            embedder, {torch.nn.Linear}, dtype=torch.qint8
+                        )
+                    except Exception as q_exc:
+                        logger.debug("DINOv2 dynamic quantization skipped: %s", q_exc)
+                else:
+                    try:
+                        embedder = embedder.to(self.device)
+                    except Exception as emb_exc:
+                        logger.warning(
+                            "Failed to move DINOv2 embedder to '%s' (%s); falling back to CPU.",
+                            self.device,
+                            emb_exc,
+                        )
+                        self.device = "cpu"
+                        embedder = embedder.to("cpu")
+                        try:
+                            embedder = torch.quantization.quantize_dynamic(
+                                embedder, {torch.nn.Linear}, dtype=torch.qint8
+                            )
+                        except Exception:
+                            pass
 
                 self._yoloe_model = yoloe
                 self._embedder_model = embedder
@@ -550,7 +983,7 @@ class CustomObjectDetector:
         return vpe.detach().float().cpu()
 
     def _extract_batch_embeddings(self, crops_bgr: Sequence[np.ndarray]) -> List[np.ndarray]:
-        """Compute L2-normalized 960-dim MobileNetV3-Large embeddings for a batch of BGR crops."""
+        """Compute L2-normalized 384-dim DINOv2-Small embeddings for a batch of BGR crops."""
         if not crops_bgr or self._embedder_model is None:
             return []
 
@@ -566,7 +999,7 @@ class CustomObjectDetector:
         """
         Compute:
           1. YOLOE VPE on full reference image(s) with exact user-selected foreground box(es)
-          2. MobileNetV3 + HSV fingerprints strictly on the tight foreground crop(s)
+          2. DINOv2 + HSV fingerprints strictly on the tight foreground crop(s)
           3. Background signatures on excluded strips outside the box(es) for Background Guard
         """
         self.ensure_models_loaded()
@@ -588,14 +1021,24 @@ class CustomObjectDetector:
         if not full_imgs_with_boxes:
             raise ValueError(f"No readable reference images found for custom item '{record.name}'.")
 
-        vpes = [self._extract_single_vpe(img, box) for img, box in full_imgs_with_boxes]
+        # Multi-scale YOLOE visual prompt embeddings:
+        # Generate scale variants (original, far, close) so VPE represents all distances
+        vpe_samples: List[Tuple[np.ndarray, List[float]]] = []
+        for img, box in full_imgs_with_boxes:
+            vpe_samples.extend(_generate_multiscale_vpe_samples(img, box))
+
+        vpes = [self._extract_single_vpe(vimg, vbox) for vimg, vbox in vpe_samples]
         avg_vpe = torch.mean(torch.stack(vpes, dim=0), dim=0)
         avg_vpe = F.normalize(avg_vpe, p=2, dim=-1)
 
-        # Tight foreground crops for pure object appearance & color matching
+        # Tight foreground crops + Multi-Scale / Lighting Augmentations for pure object appearance & color matching
         fg_crops = [_crop_by_norm_bbox(img, box) for img, box in full_imgs_with_boxes]
-        ref_embeddings = self._extract_batch_embeddings(fg_crops)
-        ref_hists = [_compute_central_hsv_hist(crop) for crop in fg_crops]
+        augmented_fg_crops: List[np.ndarray] = []
+        for crop in fg_crops:
+            augmented_fg_crops.extend(_generate_multiscale_augmented_crops(crop))
+
+        ref_embeddings = self._extract_batch_embeddings(augmented_fg_crops)
+        ref_hists = [_compute_central_hsv_hist(crop) for crop in augmented_fg_crops]
 
         # Background strips strictly outside user-selected box for contrast guard
         bg_strips: List[np.ndarray] = []
@@ -621,6 +1064,13 @@ class CustomObjectDetector:
     def get_item(self, item_id: str) -> Optional[CustomItemRecord]:
         with self._lock:
             return self._items.get(item_id)
+
+    def get_item_detail(self, item_id: str) -> CustomItemDetailOut:
+        with self._lock:
+            rec = self._items.get(item_id)
+            if not rec:
+                raise KeyError(f"Custom item '{item_id}' not found.")
+            return rec.to_detail_schema(self.storage_dir)
 
     def add_item(
         self,
@@ -753,6 +1203,97 @@ class CustomObjectDetector:
             )
             return record.to_schema()
 
+    def update_item(
+        self,
+        item_id: str,
+        name: Optional[str] = None,
+        retained_photos: Optional[Sequence[Dict[str, Any]]] = None,
+        new_image_bytes_list: Optional[Sequence[bytes]] = None,
+        new_bboxes_norm: Optional[Sequence[Optional[Sequence[float]]]] = None,
+    ) -> CustomItemOut:
+        """Update item name, retained reference photos (with crops), and append newly added photos."""
+        with self._lock:
+            record = self._items.get(item_id)
+            if record is None:
+                raise KeyError(f"Custom item '{item_id}' not found.")
+
+            if name is not None:
+                cleaned_name = " ".join(name.strip().split())
+                if not cleaned_name:
+                    raise ValueError("Item name cannot be empty.")
+                if len(cleaned_name) > 60:
+                    raise ValueError("Item name must be 60 characters or fewer.")
+                for other_id, other in self._items.items():
+                    if other_id != item_id and other.name.strip().lower() == cleaned_name.lower():
+                        raise ValueError(
+                            f"A custom item named '{other.name}' already exists. Please choose a unique name."
+                        )
+                record.name = cleaned_name
+
+            # Process retained existing photos
+            final_files: List[str] = []
+            final_bboxes: List[List[float]] = []
+
+            if retained_photos is not None:
+                retained_set = set()
+                for p in retained_photos:
+                    fname = p.get("file_name")
+                    if fname and fname in record.image_files and (self.storage_dir / fname).exists():
+                        retained_set.add(fname)
+                        final_files.append(fname)
+                        box = p.get("bbox_norm")
+                        final_bboxes.append(_sanitize_bbox_norm(box))
+
+                # Delete dropped files from disk
+                for old_fname in record.image_files:
+                    if old_fname not in retained_set:
+                        (self.storage_dir / old_fname).unlink(missing_ok=True)
+            else:
+                final_files = list(record.image_files)
+                final_bboxes = [list(b) for b in record.image_bboxes]
+
+            # Process newly added images if any
+            if new_image_bytes_list:
+                decoded_new = [_resize_max_side(_decode_bgr_image(b)) for b in new_image_bytes_list]
+                resolved_new_bboxes = [
+                    _sanitize_bbox_norm(
+                        new_bboxes_norm[idx] if new_bboxes_norm and idx < len(new_bboxes_norm) else None
+                    )
+                    for idx in range(len(decoded_new))
+                ]
+                timestamp_ms = int(time.time() * 1000)
+                for idx, img in enumerate(decoded_new):
+                    fname = f"{item_id}_edit_{len(final_files)}_{timestamp_ms}.jpg"
+                    out_path = self.storage_dir / fname
+                    cv2.imwrite(str(out_path), img, [int(cv2.IMWRITE_JPEG_QUALITY), 92])
+                    final_files.append(fname)
+                    final_bboxes.append(resolved_new_bboxes[idx])
+
+            if not final_files:
+                raise ValueError("A custom item must retain at least one reference photo.")
+
+            record.image_files = final_files
+            record.image_bboxes = final_bboxes
+
+            # Update primary thumbnail from the first image
+            first_path = self.storage_dir / final_files[0]
+            if first_path.exists():
+                first_img = cv2.imread(str(first_path), cv2.IMREAD_COLOR)
+                if first_img is not None:
+                    first_crop = _crop_by_norm_bbox(first_img, final_bboxes[0])
+                    record.thumbnail_base64 = _make_thumbnail_data_url(first_crop)
+
+            # Recompute visual prompt features and embeddings with multi-scale & rotation invariance
+            record.features_ready = False
+            self.ensure_models_loaded()
+            self._compute_item_features(record)
+
+            self._prompt_version += 1
+            self._active_prompt_signature = None
+            self._save_metadata_to_disk()
+            logger.info("Updated custom item '%s' (id=%s, photos=%d).", record.name, item_id, len(final_files))
+            return record.to_schema()
+
     def delete_item(self, item_id: str) -> bool:
         """Delete a custom item and its stored reference photos."""
         with self._lock:
@@ -770,8 +1311,9 @@ class CustomObjectDetector:
             return True
 
     def reset_tracker(self) -> None:
-        """Reset internal ByteTrack tracker on the YOLOE model if loaded."""
+        """Reset internal ByteTrack tracker on the YOLOE model and clear temporal smoother."""
         with self._lock:
+            self._smoother.clear()
             if (
                 self._yoloe_model is not None
                 and hasattr(self._yoloe_model, "predictor")
@@ -835,7 +1377,7 @@ class CustomObjectDetector:
 
             img_h, img_w = image_bgr.shape[:2]
             frame_area = float(max(1, img_w * img_h))
-            proposal_conf = max(0.15, min(float(confidence) * 0.75, 0.50))
+            proposal_conf = max(0.08, min(float(confidence) * 0.60, 0.35))
 
             start_t = time.perf_counter()
             try:
@@ -883,7 +1425,7 @@ class CustomObjectDetector:
                             continue
 
                         ix1, iy1, ix2, iy2 = int(x1), int(y1), int(x2), int(y2)
-                        if ix2 - ix1 < 12 or iy2 - iy1 < 12:
+                        if ix2 - ix1 < 10 or iy2 - iy1 < 10:
                             continue
 
                         crop = image_bgr[iy1:iy2, ix1:ix2]
@@ -926,7 +1468,7 @@ class CustomObjectDetector:
                     )
                     color_fg_sim = max(0.0, min(1.0, color_fg_sim))
 
-                    fg_sim = 0.72 * deep_fg_sim + 0.28 * color_fg_sim
+                    fg_sim = 0.80 * deep_fg_sim + 0.20 * color_fg_sim
                     if fg_sim < sim_thresh:
                         continue
 
@@ -942,12 +1484,12 @@ class CustomObjectDetector:
                             for bg_h in item.ref_bg_hists
                         )
                         color_bg_sim = max(0.0, min(1.0, color_bg_sim))
-                        bg_sim = 0.72 * deep_bg_sim + 0.28 * color_bg_sim
+                        bg_sim = 0.80 * deep_bg_sim + 0.20 * color_bg_sim
 
                         if fg_sim < bg_sim + BG_CONTRAST_MARGIN:
                             continue
 
-                    blended_conf = max(0.0, min(1.0, 0.45 * yoloe_conf + 0.55 * fg_sim))
+                    blended_conf = max(0.0, min(1.0, 0.40 * yoloe_conf + 0.60 * fg_sim))
                     detections.append(
                         DetectionItem(
                             label=item.name,
@@ -960,6 +1502,9 @@ class CustomObjectDetector:
                             similarity=round(fg_sim, 4),
                         )
                     )
+
+            # Apply temporal smoothing + anti-flicker persistence buffer
+            detections = self._smoother.update(detections, [it.id for it in active_items])
 
             elapsed_ms = (time.perf_counter() - start_t) * 1000.0
             detections.sort(key=lambda d: d.confidence, reverse=True)

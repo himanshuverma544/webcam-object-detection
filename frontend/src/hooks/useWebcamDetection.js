@@ -5,9 +5,11 @@ import {
   deleteCustomItem,
   detectObjects,
   fetchClasses,
+  fetchCustomItemDetail,
   fetchCustomItems,
   fetchHealth,
   resetTrack,
+  updateCustomItem,
 } from "../services/api";
 
 const INITIAL_CONFIDENCE = Number(
@@ -89,7 +91,7 @@ export function useWebcamDetection() {
   const [customItems, setCustomItems] = useState([]);
   const [selectedCustomIds, setSelectedCustomIds] = useState([]);
   const selectedCustomIdsRef = useRef(selectedCustomIds);
-  const [similarityThreshold, setSimilarityThreshold] = useState(0.65);
+  const [similarityThreshold, setSimilarityThreshold] = useState(0.60);
   const similarityThresholdRef = useRef(similarityThreshold);
   const [isUploadingCustom, setIsUploadingCustom] = useState(false);
   const [customItemError, setCustomItemError] = useState(null);
@@ -235,6 +237,36 @@ export function useWebcamDetection() {
       }
     }
   }, []);
+
+  const editCustomItem = useCallback(
+    async (itemId, { name, retainedPhotos = null, newFiles = [], newBboxes = null }) => {
+      setIsUploadingCustom(true);
+      setCustomItemError(null);
+      try {
+        const updated = await updateCustomItem(itemId, {
+          name,
+          retainedPhotos,
+          newFiles,
+          newBboxes,
+        });
+        if (!mountedRef.current) return null;
+        setCustomItems((prev) =>
+          prev.map((item) => (item.id === updated.id ? updated : item))
+        );
+        return updated;
+      } catch (err) {
+        if (mountedRef.current) {
+          setCustomItemError(err.message || "Failed to update custom item.");
+        }
+        throw err;
+      } finally {
+        if (mountedRef.current) {
+          setIsUploadingCustom(false);
+        }
+      }
+    },
+    []
+  );
 
   const removeCustomItem = useCallback(async (itemId) => {
     setCustomItemError(null);
@@ -600,6 +632,8 @@ export function useWebcamDetection() {
     setCustomItemError,
     uploadCustomItem,
     addImagesToCustomItem,
+    editCustomItem,
+    fetchCustomItemDetail,
     removeCustomItem,
     toggleCustomItem,
     refreshCustomItems,

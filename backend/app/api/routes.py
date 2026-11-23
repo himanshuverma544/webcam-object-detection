@@ -22,6 +22,7 @@ from app.schemas.detection import (
     AutoBoxResponse,
     ClassesResponse,
     CustomItemDeleteResponse,
+    CustomItemDetailOut,
     CustomItemOut,
     CustomItemsListResponse,
     DetectionResponse,
@@ -601,6 +602,96 @@ async def add_custom_item_images(
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
     except Exception as exc:
         logger.exception("Failed to add images to custom item '%s'.", item_id)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to update custom item: {exc}",
+        ) from exc
+
+
+@router.get(
+    "/custom-items/{item_id}",
+    response_model=CustomItemDetailOut,
+    summary="Retrieve full details and reference photos for a custom item",
+)
+async def get_custom_item_detail(
+    item_id: str,
+    custom_detector: CustomObjectDetector = Depends(get_custom_detector),
+) -> CustomItemDetailOut:
+    """Return complete custom item details including all reference photos and bounding boxes."""
+    try:
+        return custom_detector.get_item_detail(item_id)
+    except KeyError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Custom item '{item_id}' not found.",
+        ) from exc
+
+
+@router.put(
+    "/custom-items/{item_id}",
+    response_model=CustomItemOut,
+    summary="Update a registered custom reference item (name, photos, crops)",
+)
+async def update_custom_item(
+    item_id: str,
+    name: Optional[str] = Form(default=None, description="Optional updated name for the item"),
+    retained_photos: Optional[str] = Form(
+        default=None,
+        description="Optional JSON array of retained photos: [{'file_name': '...', 'bbox_norm': [...]}]",
+    ),
+    files: Optional[List[UploadFile]] = File(default=None, description="Optional newly added reference photos"),
+    bboxes: Optional[str] = Form(
+        default=None,
+        description="Optional JSON array of normalized [x1, y1, x2, y2] boxes for newly added files",
+    ),
+    custom_detector: CustomObjectDetector = Depends(get_custom_detector),
+    settings: Settings = Depends(get_settings),
+) -> CustomItemOut:
+    """Update item name, retained reference photos (with crops), and append newly added photos."""
+    parsed_bboxes = _parse_bboxes_form(bboxes)
+
+    parsed_retained: Optional[List[Dict[str, Any]]] = None
+    if retained_photos and retained_photos.strip():
+        try:
+            parsed_retained = json.loads(retained_photos)
+        except json.JSONDecodeError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Invalid 'retained_photos' JSON payload.",
+            ) from exc
+
+    new_image_bytes_list: List[bytes] = []
+    if files:
+        for f in files:
+            content_type = (f.content_type or "").lower().strip()
+            if content_type and content_type not in settings.allowed_content_types:
+                await f.close()
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail=f"Unsupported file type '{content_type}'. Allowed: JPEG, PNG, WebP.",
+                )
+            raw = await f.read()
+            await f.close()
+            if not raw:
+                continue
+            if len(raw) > settings.max_upload_size_bytes:
+                raise HTTPException(status_code=413, detail="Reference image exceeds size limit.")
+            new_image_bytes_list.append(raw)
+
+    try:
+        return custom_detector.update_item(
+            item_id=item_id,
+            name=name,
+            retained_photos=parsed_retained,
+            new_image_bytes_list=new_image_bytes_list,
+            new_bboxes_norm=parsed_bboxes,
+        )
+    except KeyError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+    except Exception as exc:
+        logger.exception("Failed to update custom item '%s'.", item_id)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to update custom item: {exc}",
