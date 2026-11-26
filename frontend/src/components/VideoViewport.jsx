@@ -1,4 +1,5 @@
 import React, { useCallback, useEffect, useRef, useState } from "react";
+import { FiMaximize, FiMinimize } from "react-icons/fi";
 
 // High-contrast color palette indexed by COCO class_id
 const BOX_PALETTE = [
@@ -68,6 +69,91 @@ export function VideoViewport({
   const [focusedTarget, setFocusedTarget] = useState(null);
   const [zoomTransform, setZoomTransform] = useState(DEFAULT_ZOOM);
   const [isHoveringBox, setIsHoveringBox] = useState(false);
+  const [isFullscreen, setIsFullscreen] = useState(false);
+
+  const toggleFullscreen = useCallback(async () => {
+    try {
+      const container = containerRef.current;
+      if (!container) return;
+
+      const isCurrentlyFullscreen = Boolean(
+        document.fullscreenElement ||
+          document.webkitFullscreenElement ||
+          document.mozFullScreenElement ||
+          document.msFullscreenElement
+      );
+
+      if (!isCurrentlyFullscreen) {
+        if (container.requestFullscreen) {
+          await container.requestFullscreen();
+        } else if (container.webkitRequestFullscreen) {
+          await container.webkitRequestFullscreen();
+        } else if (container.mozRequestFullScreen) {
+          await container.mozRequestFullScreen();
+        } else if (container.msRequestFullscreen) {
+          await container.msRequestFullscreen();
+        }
+      } else {
+        if (document.exitFullscreen) {
+          await document.exitFullscreen();
+        } else if (document.webkitExitFullscreen) {
+          await document.webkitExitFullscreen();
+        } else if (document.mozCancelFullScreen) {
+          await document.mozCancelFullScreen();
+        } else if (document.msExitFullscreen) {
+          await document.msExitFullscreen();
+        }
+      }
+    } catch (err) {
+      console.warn("Fullscreen toggle failed:", err);
+    }
+  }, []);
+
+  // Listen for fullscreen change events (e.g. user pressed Esc)
+  useEffect(() => {
+    const handleFullscreenChange = () => {
+      const isCurrentlyFullscreen = Boolean(
+        document.fullscreenElement ||
+          document.webkitFullscreenElement ||
+          document.mozFullScreenElement ||
+          document.msFullscreenElement
+      );
+      setIsFullscreen(isCurrentlyFullscreen);
+    };
+
+    document.addEventListener("fullscreenchange", handleFullscreenChange);
+    document.addEventListener("webkitfullscreenchange", handleFullscreenChange);
+    document.addEventListener("mozfullscreenchange", handleFullscreenChange);
+    document.addEventListener("MSFullscreenChange", handleFullscreenChange);
+
+    return () => {
+      document.removeEventListener("fullscreenchange", handleFullscreenChange);
+      document.removeEventListener("webkitfullscreenchange", handleFullscreenChange);
+      document.removeEventListener("mozfullscreenchange", handleFullscreenChange);
+      document.removeEventListener("MSFullscreenChange", handleFullscreenChange);
+    };
+  }, []);
+
+  // Keyboard shortcut: Pressing 'f' toggles fullscreen (just like YouTube)
+  useEffect(() => {
+    const handleKeyDown = (e) => {
+      if (
+        e.target instanceof HTMLInputElement ||
+        e.target instanceof HTMLTextAreaElement ||
+        e.target instanceof HTMLSelectElement ||
+        e.target?.isContentEditable
+      ) {
+        return;
+      }
+      if (e.key === "f" || e.key === "F") {
+        e.preventDefault();
+        toggleFullscreen();
+      }
+    };
+
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [toggleFullscreen]);
 
   const zoomTransformRef = useRef(DEFAULT_ZOOM);
   const focusedTargetRef = useRef(null);
@@ -958,6 +1044,19 @@ export function VideoViewport({
             </button>
           </div>
         )}
+
+        {/* YouTube-style Fullscreen Button */}
+        <div className="player-controls-overlay">
+          <button
+            type="button"
+            className="player-fullscreen-btn"
+            onClick={toggleFullscreen}
+            title={isFullscreen ? "Exit full screen (f)" : "Full screen (f)"}
+            aria-label={isFullscreen ? "Exit full screen" : "Full screen"}
+          >
+            {isFullscreen ? <FiMinimize /> : <FiMaximize />}
+          </button>
+        </div>
       </div>
     </div>
   );

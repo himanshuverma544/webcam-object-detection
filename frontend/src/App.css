@@ -258,6 +258,82 @@
   color: #fbbf24;
 }
 
+/* YouTube-Style Fullscreen Player Controls */
+.player-controls-overlay {
+  position: absolute;
+  bottom: 12px;
+  right: 12px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  z-index: 60;
+  pointer-events: auto;
+}
+
+.player-fullscreen-btn {
+  width: 40px;
+  height: 40px;
+  border-radius: 8px;
+  background: rgba(15, 23, 42, 0.78);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  color: #f1f5f9;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 1.25rem;
+  cursor: pointer;
+  transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.45);
+}
+
+.player-fullscreen-btn:hover {
+  background: rgba(30, 41, 59, 0.95);
+  border-color: rgba(255, 255, 255, 0.45);
+  color: #ffffff;
+  transform: scale(1.08);
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.6);
+}
+
+.player-fullscreen-btn:active {
+  transform: scale(0.95);
+}
+
+/* Fullscreen Mode Display Adjustments */
+.video-viewport-card:fullscreen,
+.video-viewport-card:-webkit-full-screen {
+  width: 100vw !important;
+  height: 100vh !important;
+  max-width: 100vw !important;
+  max-height: 100vh !important;
+  padding: 0 !important;
+  margin: 0 !important;
+  border-radius: 0 !important;
+  border: none !important;
+  background: #000000 !important;
+  display: flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  z-index: 99999 !important;
+}
+
+.video-viewport-card:fullscreen .video-stage,
+.video-viewport-card:-webkit-full-screen .video-stage {
+  width: 100% !important;
+  height: 100% !important;
+  max-height: 100vh !important;
+  aspect-ratio: auto !important;
+  border-radius: 0 !important;
+  background: #000000 !important;
+}
+
+.video-viewport-card:fullscreen .player-controls-overlay,
+.video-viewport-card:-webkit-full-screen .player-controls-overlay {
+  bottom: 24px;
+  right: 24px;
+}
+
 .viewport-placeholder {
   position: absolute;
   inset: 0;
@@ -809,7 +885,11 @@
 
 @media (max-width: 640px) {
   .app-shell {
-    padding: 12px;
+    padding: 10px 10px 90px;
+    width: 100%;
+    max-width: 100vw;
+    box-sizing: border-box;
+    overflow-x: hidden;
   }
 
   .controls-row {
@@ -3316,9 +3396,13 @@
   outline: none;
   transition: border-color 0.15s ease, box-shadow 0.15s ease;
   width: 100%;
+  max-width: 100%;
+  min-width: 0;
+  box-sizing: border-box;
   cursor: pointer;
   text-overflow: ellipsis;
   white-space: nowrap;
+  overflow: hidden;
 }
 
 .rules-input {
@@ -3398,5 +3482,824 @@
     transform: scale(1.005);
   }
 }
+
+/* ==========================================================================
+   Automations Full Page Styles & Responsive Rule Engine
+   ========================================================================== */
+
+.automations-page-container {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  width: 100%;
+  max-width: 100%;
+  box-sizing: border-box;
+  animation: fadeInPage 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+@keyframes fadeInPage {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+/* Page Header */
+.automations-page-header {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  padding: 18px 22px;
+  background: var(--bg-card, #131b2e);
+  border: 1px solid var(--border-subtle, rgba(255, 255, 255, 0.08));
+  border-radius: var(--radius-lg, 12px);
+  width: 100%;
+  box-sizing: border-box;
+}
+
+.automations-header-top-nav {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+}
+
+.automations-back-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 14px;
+  font-size: 0.85rem;
+  font-weight: 500;
+  white-space: nowrap;
+}
+
+.automations-count-pill {
+  font-size: 0.78rem;
+  font-weight: 600;
+  padding: 3px 10px;
+  border-radius: 999px;
+  background: rgba(56, 189, 248, 0.12);
+  color: #38bdf8;
+  border: 1px solid rgba(56, 189, 248, 0.25);
+  white-space: nowrap;
+}
+
+.automations-header-main {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 16px;
+  width: 100%;
+}
+
+.automations-title-wrap {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+
+.automations-title-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.automations-title-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  border-radius: 8px;
+  background: rgba(99, 102, 241, 0.18);
+  color: #818cf8;
+  font-size: 1.1rem;
+  flex-shrink: 0;
+}
+
+.automations-title-row h2 {
+  margin: 0;
+  font-size: 1.35rem;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  color: #f1f5f9;
+}
+
+.automations-subtitle {
+  margin: 0;
+  font-size: 0.85rem;
+  color: var(--text-secondary, #94a3b8);
+  line-height: 1.45;
+}
+
+.automations-header-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-shrink: 0;
+}
+
+/* Stat Cards (Desktop / Tablet) */
+.automations-stats-row {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 12px;
+  width: 100%;
+  box-sizing: border-box;
+}
+
+.automation-stat-card {
+  background: var(--bg-card, #131b2e);
+  border: 1px solid var(--border-subtle, rgba(255, 255, 255, 0.08));
+  border-radius: var(--radius-lg, 12px);
+  padding: 14px 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 0;
+}
+
+.automation-stat-card .stat-label {
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: var(--text-muted, #94a3b8);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.automation-stat-card .stat-value {
+  font-size: 1.45rem;
+  font-weight: 700;
+  color: #f1f5f9;
+}
+
+.automation-stat-card .stat-hint {
+  font-size: 0.76rem;
+  color: var(--text-secondary, #64748b);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* Builder Container */
+.automations-builder-card {
+  background: var(--bg-card, #131b2e);
+  border: 1px solid var(--border-subtle, rgba(255, 255, 255, 0.08));
+  border-radius: var(--radius-lg, 12px);
+  padding: 22px 24px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  width: 100%;
+  box-sizing: border-box;
+}
+
+.automations-builder-header h3 {
+  margin: 0;
+  font-size: 1.05rem;
+  font-weight: 700;
+  color: #f1f5f9;
+}
+
+.automations-builder-header p {
+  margin: 4px 0 0;
+  font-size: 0.85rem;
+  color: var(--text-muted, #94a3b8);
+}
+
+.automations-rules-list {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  width: 100%;
+  box-sizing: border-box;
+}
+
+.automations-rule-card {
+  position: relative;
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 10px;
+  padding: 14px 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  transition: all 0.15s ease;
+  width: 100%;
+  box-sizing: border-box;
+}
+
+.automations-rule-card.has-open-dropdown {
+  z-index: 50;
+}
+
+.automations-rule-card:hover {
+  background: rgba(255, 255, 255, 0.045);
+  border-color: rgba(99, 102, 241, 0.3);
+}
+
+/* Rule Fields & Grid */
+.rule-field-wrap {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  width: 100%;
+  min-width: 0;
+  box-sizing: border-box;
+}
+
+.rule-field-actions {
+  position: relative !important;
+}
+
+.rule-field-actions.dropdown-open {
+  z-index: 100 !important;
+}
+
+/* Threshold Input & Badges */
+.threshold-input-group {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  min-width: 0;
+  box-sizing: border-box;
+}
+
+.threshold-number-input {
+  background: #182234;
+  color: #f1f5f9;
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  border-radius: 6px;
+  padding: 9px 10px;
+  font-size: 0.88rem;
+  text-align: center;
+  outline: none;
+  width: 100%;
+  min-width: 0;
+  flex: 1;
+  box-sizing: border-box;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+
+.threshold-number-input:focus {
+  border-color: #6366f1;
+  box-shadow: 0 0 0 2px rgba(99, 102, 241, 0.25);
+}
+
+.threshold-unit-label {
+  font-size: 0.85rem;
+  color: var(--text-muted, #94a3b8);
+  flex-shrink: 0;
+  font-weight: 500;
+}
+
+.threshold-instant-badge {
+  padding: 9px 12px;
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 6px;
+  font-size: 0.85rem;
+  color: var(--text-muted, #94a3b8);
+  text-align: center;
+  width: 100%;
+  box-sizing: border-box;
+  min-width: 0;
+}
+
+/* Search Operations Box */
+.rule-search-box {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  background: #182234;
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  border-radius: 6px;
+  padding: 8px 12px;
+  cursor: pointer;
+  font-size: 0.88rem;
+  color: #f1f5f9;
+  width: 100%;
+  min-width: 0;
+  box-sizing: border-box;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+
+.rule-search-box.open,
+.rule-search-box:focus-within {
+  border-color: #6366f1;
+  box-shadow: 0 0 0 2px rgba(99, 102, 241, 0.25);
+}
+
+.rule-search-inner {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: 1;
+  min-width: 0;
+}
+
+.rule-search-icon {
+  color: var(--text-muted, #94a3b8);
+  flex-shrink: 0;
+  font-size: 0.95rem;
+}
+
+.rule-search-input {
+  background: transparent;
+  border: none;
+  color: #f1f5f9;
+  outline: none;
+  width: 100%;
+  min-width: 0;
+  font-size: 0.88rem;
+  font-family: inherit;
+}
+
+.rule-search-counter {
+  font-size: 0.78rem;
+  color: var(--text-muted, #94a3b8);
+  white-space: nowrap;
+  margin-left: 8px;
+  font-weight: 600;
+  flex-shrink: 0;
+}
+
+.rule-search-dropdown-menu {
+  position: absolute !important;
+  top: calc(100% + 4px) !important;
+  left: 0 !important;
+  right: 0 !important;
+  width: 100% !important;
+  min-width: 100% !important;
+  box-sizing: border-box !important;
+  background: #1e293b;
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  border-radius: 6px;
+  box-shadow: 0 14px 30px rgba(0, 0, 0, 0.6);
+  z-index: 1200 !important;
+  max-height: 220px;
+  overflow-y: auto;
+}
+
+.rule-search-dropdown-empty {
+  padding: 10px 14px;
+  font-size: 0.85rem;
+  color: #94a3b8;
+}
+
+.rule-search-dropdown-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 9px 14px;
+  cursor: pointer;
+  font-size: 0.86rem;
+  color: #f1f5f9;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+  transition: background 0.12s ease;
+}
+
+.rule-search-dropdown-item:hover {
+  background: rgba(255, 255, 255, 0.06);
+}
+
+.rule-search-dropdown-item.selected {
+  background: rgba(56, 189, 248, 0.12);
+  color: #38bdf8;
+}
+
+.item-label-group {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.item-icon {
+  font-size: 1.05rem;
+  flex-shrink: 0;
+}
+
+.item-check {
+  color: #38bdf8;
+  font-size: 1rem;
+}
+
+/* Delete Rule Button */
+.rule-delete-btn {
+  background: none;
+  border: none;
+  color: var(--text-muted, #94a3b8);
+  cursor: pointer;
+  font-size: 1.25rem;
+  padding: 6px;
+  width: 36px;
+  height: 36px;
+  border-radius: 6px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.15s ease;
+  flex-shrink: 0;
+}
+
+.rule-delete-btn:hover {
+  color: #ef4444;
+  background: rgba(239, 68, 68, 0.12);
+}
+
+/* Active Response Tag Pills */
+.rule-tags-container {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  padding-top: 4px;
+  width: 100%;
+  box-sizing: border-box;
+}
+
+.rule-tags-label {
+  font-size: 0.76rem;
+  color: var(--text-muted, #94a3b8);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  margin-right: 2px;
+}
+
+.rule-action-tag-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  background: rgba(255, 255, 255, 0.07);
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  border-radius: 6px;
+  padding: 5px 10px 5px 12px;
+  font-size: 0.84rem;
+  color: #f1f5f9;
+  max-width: 100%;
+  box-sizing: border-box;
+}
+
+.tag-icon {
+  font-size: 0.95rem;
+  color: #38bdf8;
+  flex-shrink: 0;
+}
+
+.tag-label {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.tag-remove-btn {
+  background: none;
+  border: none;
+  color: #94a3b8;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0 2px;
+  line-height: 1;
+  transition: color 0.15s ease;
+}
+
+.tag-remove-btn:hover {
+  color: #ef4444;
+}
+
+.rule-test-btn {
+  background: rgba(99, 102, 241, 0.15);
+  border: 1px solid rgba(99, 102, 241, 0.3);
+  color: #a5b4fc;
+  cursor: pointer;
+  font-size: 0.78rem;
+  padding: 4px 10px;
+  border-radius: 6px;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  margin-left: auto;
+  white-space: nowrap;
+  transition: all 0.15s ease;
+}
+
+.rule-test-btn:hover {
+  background: rgba(99, 102, 241, 0.25);
+  border-color: #6366f1;
+}
+
+/* Centered + ADD Button */
+.automations-add-wrap {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  margin-top: 18px;
+  width: 100%;
+}
+
+.automations-add-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 9px 28px;
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  border-radius: 8px;
+  color: #f1f5f9;
+  font-size: 0.88rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.automations-add-btn:hover:not(:disabled) {
+  background: rgba(99, 102, 241, 0.15);
+  border-color: #6366f1;
+  color: #818cf8;
+}
+
+.automations-add-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+/* Bottom Bar */
+.automations-bottom-bar {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 14px 20px;
+  background: var(--bg-card, #131b2e);
+  border: 1px solid var(--border-subtle, rgba(255, 255, 255, 0.08));
+  border-radius: var(--radius-lg, 12px);
+  width: 100%;
+  box-sizing: border-box;
+}
+
+/* Empty State */
+.automations-empty-state {
+  text-align: center;
+  padding: 44px 20px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+}
+
+.empty-icon-circle {
+  width: 54px;
+  height: 54px;
+  border-radius: 50%;
+  background: rgba(99, 102, 241, 0.12);
+  color: #818cf8;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 1.5rem;
+  margin-bottom: 6px;
+}
+
+.automations-empty-state h4 {
+  margin: 0;
+  font-size: 1.15rem;
+  color: #f1f5f9;
+}
+
+.automations-empty-state p {
+  margin: 0;
+  max-width: 500px;
+  font-size: 0.86rem;
+  color: var(--text-secondary, #94a3b8);
+  line-height: 1.5;
+}
+
+/* ==========================================================================
+   BREAKPOINTS: Desktop / Tablet / Mobile
+   ========================================================================== */
+
+/* 1. Desktop (> 1024px) */
+@media (min-width: 1025px) {
+  .automations-rule-row,
+  .rules-builder-row {
+    display: grid !important;
+    grid-template-columns: minmax(210px, 1.4fr) minmax(180px, 1.1fr) minmax(95px, 0.65fr) minmax(210px, 1.35fr) 36px !important;
+    grid-template-areas: "event operator threshold actions delete" !important;
+    gap: 10px !important;
+    align-items: center;
+    width: 100%;
+    box-sizing: border-box;
+  }
+
+  .rule-field-event { grid-area: event; min-width: 0; }
+  .rule-field-operator { grid-area: operator; min-width: 0; }
+  .rule-field-threshold { grid-area: threshold; min-width: 0; }
+  .rule-field-actions { grid-area: actions; min-width: 0; }
+  .rule-field-delete { grid-area: delete; min-width: 0; display: flex; align-items: center; justify-content: center; }
+}
+
+/* 2. Tablet (641px - 1024px) - Matches Image 2: media_1795678287918_42b38c60.png */
+@media (min-width: 641px) and (max-width: 1024px) {
+  .automations-rule-row,
+  .rules-builder-row {
+    display: grid !important;
+    grid-template-columns: 1fr 1fr 36px !important;
+    grid-template-areas:
+      "event operator delete"
+      "actions threshold ." !important;
+    gap: 10px !important;
+    align-items: center;
+    width: 100%;
+    box-sizing: border-box;
+  }
+
+  .rule-field-event { grid-area: event; min-width: 0; width: 100%; }
+  .rule-field-operator { grid-area: operator; min-width: 0; width: 100%; }
+  .rule-field-delete { grid-area: delete; min-width: 0; display: flex; align-items: center; justify-content: center; }
+  .rule-field-actions { grid-area: actions; min-width: 0; width: 100%; }
+  .rule-field-threshold { grid-area: threshold; min-width: 0; width: 100%; }
+
+  .automations-stats-row {
+    grid-template-columns: repeat(2, 1fr) !important;
+    gap: 10px;
+  }
+
+  .automation-stat-card {
+    padding: 12px 14px;
+  }
+
+  .automation-stat-card .stat-value {
+    font-size: 1.3rem;
+  }
+
+  .automations-builder-card {
+    padding: 18px 16px;
+  }
+
+  .automations-rule-card {
+    padding: 14px 12px;
+  }
+}
+
+/* 3. Mobile (<= 640px) - Matches Image 1: media_1795678232925_34a42d90.png */
+@media (max-width: 640px) {
+  .app-shell {
+    padding: 10px 10px 90px !important;
+    gap: 10px !important;
+    width: 100% !important;
+    max-width: 100vw !important;
+    box-sizing: border-box !important;
+    overflow-x: hidden !important;
+  }
+
+  .automations-page-header {
+    padding: 14px 12px !important;
+    gap: 12px !important;
+  }
+
+  .automations-header-top-nav {
+    display: flex !important;
+    align-items: center !important;
+    justify-content: space-between !important;
+    width: 100% !important;
+  }
+
+  .automations-back-btn {
+    padding: 7px 12px !important;
+    font-size: 0.82rem !important;
+  }
+
+  .automations-header-main {
+    flex-direction: column !important;
+    align-items: stretch !important;
+    gap: 10px !important;
+  }
+
+  .automations-title-wrap {
+    width: 100% !important;
+  }
+
+  .automations-title-row h2 {
+    font-size: 1.25rem !important;
+  }
+
+  .automations-subtitle {
+    font-size: 0.8rem !important;
+    line-height: 1.4 !important;
+  }
+
+  .automations-header-actions {
+    display: grid !important;
+    grid-template-columns: 1fr 1fr !important;
+    gap: 8px !important;
+    width: 100% !important;
+  }
+
+  .automations-header-actions button {
+    width: 100% !important;
+    justify-content: center !important;
+    padding: 8px 12px !important;
+    font-size: 0.84rem !important;
+  }
+
+  /* HIDE bulky 4 stat cards on mobile so rule engine is immediately visible */
+  .automations-stats-row {
+    display: none !important;
+  }
+
+  .automations-builder-card {
+    padding: 14px 10px !important;
+    border-radius: 10px !important;
+  }
+
+  .automations-rule-card {
+    padding: 12px 10px !important;
+    border-radius: 8px !important;
+  }
+
+  /* Stacked Rule Layout for Mobile */
+  .automations-rule-row,
+  .rules-builder-row {
+    display: grid !important;
+    grid-template-columns: 1fr 36px !important;
+    grid-template-areas:
+      "event delete"
+      "operator operator"
+      "threshold threshold"
+      "actions actions" !important;
+    gap: 10px !important;
+    align-items: center !important;
+    width: 100% !important;
+    box-sizing: border-box !important;
+  }
+
+  .rule-field-event {
+    grid-area: event !important;
+    min-width: 0 !important;
+    width: 100% !important;
+  }
+
+  .rule-field-delete {
+    grid-area: delete !important;
+    min-width: 0 !important;
+    display: flex !important;
+    align-items: center !important;
+    justify-content: center !important;
+  }
+
+  .rule-field-operator {
+    grid-area: operator !important;
+    min-width: 0 !important;
+    width: 100% !important;
+  }
+
+  .rule-field-threshold {
+    grid-area: threshold !important;
+    min-width: 0 !important;
+    width: 100% !important;
+  }
+
+  .rule-field-actions {
+    grid-area: actions !important;
+    min-width: 0 !important;
+    width: 100% !important;
+  }
+
+  .rule-test-btn {
+    width: 100% !important;
+    justify-content: center !important;
+    margin-left: 0 !important;
+    margin-top: 4px !important;
+  }
+
+  .automations-bottom-bar {
+    flex-direction: column !important;
+    gap: 8px !important;
+    padding: 12px 10px !important;
+  }
+
+  .automations-bottom-bar button {
+    width: 100% !important;
+    justify-content: center !important;
+  }
+
+  .copilot-launcher-btn {
+    bottom: 14px !important;
+    right: 14px !important;
+    padding: 8px 14px !important;
+    font-size: 0.8rem !important;
+  }
+}
+
+
 
 

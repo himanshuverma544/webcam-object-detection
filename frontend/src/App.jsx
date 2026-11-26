@@ -1,5 +1,7 @@
 import React, { useCallback, useEffect, useRef, useState } from "react";
+import { useLocation, useNavigate } from "react-router-dom";
 import { FiAlertTriangle, FiX } from "react-icons/fi";
+import { AutomationsPage } from "./components/AutomationsPage";
 import { ChatCopilot } from "./components/ChatCopilot";
 import { ControlPanel } from "./components/ControlPanel";
 import { DetectionList } from "./components/DetectionList";
@@ -105,12 +107,44 @@ export function App() {
     }
   }, [emailNotice]);
 
-  // Event-Action Rules Engine State
+  // URL Page Route & Event-Action Rules Engine State
+  const navigate = useNavigate();
+  const location = useLocation();
+  const isAutomationsRoute = location.pathname.startsWith("/automations");
   const [isRulesModalOpen, setIsRulesModalOpen] = useState(false);
   const [rules, setRules] = useState(() => {
     try {
       const saved = localStorage.getItem("event_action_rules_v2");
-      return saved ? JSON.parse(saved) : DEFAULT_RULES;
+      if (!saved) return DEFAULT_RULES;
+      const parsed = JSON.parse(saved);
+      if (!Array.isArray(parsed)) return DEFAULT_RULES;
+      const allowedEvents = new Set([
+        "camera_blinded",
+        "camera_moved",
+        "unattended_room",
+        "crowd_detected",
+      ]);
+      const allowedActions = new Set([
+        "alarm_siren",
+        "send_sms",
+        "send_email",
+        "voice_tts",
+        "screen_flash",
+      ]);
+      return parsed
+        .filter((r) => allowedEvents.has(r.event))
+        .map((r) => {
+          const actList = Array.isArray(r.actions)
+            ? r.actions
+            : r.action
+            ? [r.action]
+            : [];
+          const filteredActs = actList.filter((a) => allowedActions.has(a));
+          return {
+            ...r,
+            actions: filteredActs.length > 0 ? filteredActs : ["alarm_siren"],
+          };
+        });
     } catch {
       return DEFAULT_RULES;
     }
@@ -914,7 +948,56 @@ export function App() {
         </div>
       )}
 
-      <main className="dashboard-grid">
+      {isAutomationsRoute && (
+        <AutomationsPage
+          rules={rules}
+          onSaveRules={handleSaveRules}
+          onBackToMonitor={() => navigate("/")}
+          isGuarded={isGuarded}
+          onTestRuleActions={(rule) => {
+            const actionList = Array.isArray(rule.actions)
+              ? rule.actions
+              : rule.action
+              ? [rule.action]
+              : ["alarm_siren"];
+            actionList.forEach((act) => {
+              if (act === "alarm_siren") {
+                startSirenAlert(3);
+              } else if (
+                act === "voice_tts" &&
+                typeof window !== "undefined" &&
+                "speechSynthesis" in window
+              ) {
+                try {
+                  window.speechSynthesis.cancel();
+                  const utterance = new SpeechSynthesisUtterance(
+                    "Security alert test: " + rule.event
+                  );
+                  utterance.rate = 1.05;
+                  window.speechSynthesis.speak(utterance);
+                } catch (e) {}
+              } else if (act === "screen_flash") {
+                setIsScreenFlashing(true);
+                setTimeout(() => setIsScreenFlashing(false), 2000);
+              } else if (act === "log_incident") {
+                setEmailNotice({
+                  type: "info",
+                  message: `Test action triggered for ${rule.event}`,
+                });
+              } else if (act === "capture_snapshot") {
+                if (typeof captureLiveSnapshotFile === "function") {
+                  captureLiveSnapshotFile("Test_Snapshot").catch(() => {});
+                }
+              }
+            });
+          }}
+        />
+      )}
+
+      <main
+        className="dashboard-grid"
+        style={{ display: !isAutomationsRoute ? "grid" : "none" }}
+      >
         <div className="primary-column">
           <VideoViewport
             videoRef={videoRef}
@@ -959,7 +1042,8 @@ export function App() {
             onStartCamera={startCamera}
             onStopCamera={handleStopCamera}
             onToggleDetection={toggleDetection}
-            onOpenRulesModal={() => setIsRulesModalOpen(true)}
+            onOpenAutomations={() => navigate("/automations")}
+            onOpenRulesModal={() => navigate("/automations")}
             activeRulesCount={rules.length}
           />
         </div>

@@ -27,6 +27,7 @@ export function ControlPanel({
   onStopCamera,
   onToggleDetection,
   onOpenRulesModal,
+  onOpenAutomations,
   activeRulesCount = 0,
 }) {
   const isCameraActive = cameraStatus === "active";
@@ -78,15 +79,15 @@ export function ControlPanel({
             {isGuarded ? `Disarm Scene (${guardedCount})` : `Guard Scene (${detectionCount})`}
           </button>
 
-          {/* 4. Set Rules / Action */}
+          {/* 4. Automations */}
           <button
             type="button"
             className="btn btn-secondary btn-rules"
-            onClick={onOpenRulesModal}
+            onClick={onOpenAutomations || onOpenRulesModal}
             title="Configure automated Event-Action security rules"
             style={{ borderColor: "var(--accent-primary, #6366f1)" }}
           >
-            Set Rules/Action {activeRulesCount > 0 ? `(${activeRulesCount})` : ""}
+            Automations {activeRulesCount > 0 ? `(${activeRulesCount})` : ""}
           </button>
 
           {/* 5. Show Metrics */}

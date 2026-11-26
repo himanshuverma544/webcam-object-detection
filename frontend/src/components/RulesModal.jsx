@@ -1,15 +1,12 @@
 import React, { useState, useEffect, useRef } from "react";
 import {
   FiAlertTriangle,
-  FiCamera,
   FiCheck,
-  FiFileText,
   FiMail,
   FiMessageSquare,
   FiPlus,
   FiRadio,
   FiSearch,
-  FiSend,
   FiSun,
   FiVolume2,
   FiX,
@@ -18,15 +15,8 @@ import {
 export const ALL_EVENT_OPTIONS = [
   { value: "camera_blinded", label: "Camera Blinded / Lens Covered" },
   { value: "camera_moved", label: "Camera Moved / Bumped" },
-  { value: "item_missing", label: "Guarded Item Gone Missing" },
-  { value: "item_moved", label: "Guarded Item Displaced / Moved" },
-  { value: "item_restored", label: "Guarded Item Restored / Recovered" },
-  { value: "person_detected", label: "Person Intrusion Detected" },
-  { value: "proximity_alert", label: "Proximity Alert (Person Near Item)" },
   { value: "unattended_room", label: "Unattended Room (Empty Scene)" },
   { value: "crowd_detected", label: "High Occupancy / Crowd Alert" },
-  { value: "tripwire_entry", label: "Restricted Zone / Tripwire Entry" },
-  { value: "abandoned_object", label: "Unattended / Abandoned Object" },
 ];
 
 export const ALL_ACTION_OPTIONS = [
@@ -35,9 +25,6 @@ export const ALL_ACTION_OPTIONS = [
   { id: "send_email", label: "Send Detailed Email", icon: FiMail },
   { id: "voice_tts", label: "Spoken Voice Warning (TTS)", icon: FiRadio },
   { id: "screen_flash", label: "Visual Screen Strobe", icon: FiSun },
-  { id: "capture_snapshot", label: "Capture Evidence Snapshot", icon: FiCamera },
-  { id: "log_incident", label: "Incident Log Entry", icon: FiFileText },
-  { id: "webhook_dispatch", label: "Webhook Dispatch", icon: FiSend },
 ];
 
 export const DEFAULT_RULES = [];
@@ -51,7 +38,23 @@ export function RulesModal({ isOpen, onClose, rules, onSaveRules }) {
 
   useEffect(() => {
     if (Array.isArray(rules)) {
-      setLocalRules(rules);
+      const validEventValues = new Set(ALL_EVENT_OPTIONS.map((e) => e.value));
+      const validActionIds = new Set(ALL_ACTION_OPTIONS.map((a) => a.id));
+      const sanitized = rules
+        .filter((r) => validEventValues.has(r.event))
+        .map((r) => {
+          const actList = Array.isArray(r.actions)
+            ? r.actions
+            : r.action
+            ? [r.action]
+            : [];
+          const filteredActs = actList.filter((a) => validActionIds.has(a));
+          return {
+            ...r,
+            actions: filteredActs.length > 0 ? filteredActs : ["alarm_siren"],
+          };
+        });
+      setLocalRules(sanitized);
     }
   }, [rules, isOpen]);
 
@@ -86,13 +89,7 @@ export function RulesModal({ isOpen, onClose, rules, onSaveRules }) {
     const nextAvailable = ALL_EVENT_OPTIONS.find((opt) => !usedEvents.has(opt.value));
     if (!nextAvailable) return;
 
-    const isImmediateEvent =
-      nextAvailable.value === "camera_moved" ||
-      nextAvailable.value === "item_moved" ||
-      nextAvailable.value === "item_restored" ||
-      nextAvailable.value === "person_detected" ||
-      nextAvailable.value === "proximity_alert" ||
-      nextAvailable.value === "tripwire_entry";
+    const isImmediateEvent = nextAvailable.value === "camera_moved";
 
     const newRule = {
       id: `rule_${Date.now()}`,
@@ -227,88 +224,94 @@ export function RulesModal({ isOpen, onClose, rules, onSaveRules }) {
                       className="rules-builder-row"
                       style={{
                         display: "grid",
-                        gridTemplateColumns: "minmax(270px, 1.5fr) minmax(210px, 1.2fr) minmax(110px, 0.7fr) minmax(240px, 1.4fr) auto",
                         gap: "12px",
                         alignItems: "center",
                       }}
                     >
-                      {/* 1. Event Trigger (Disabled if selected elsewhere, without extra text) */}
-                      <select
-                        className="rules-select"
-                        value={rule.event}
-                        onChange={(e) => handleUpdateRule(rule.id, "event", e.target.value)}
-                        aria-label="Event trigger"
-                      >
-                        {ALL_EVENT_OPTIONS.map((opt) => {
-                          const isSelectedElsewhere = currentList.some(
-                            (other) => other.id !== rule.id && other.event === opt.value
-                          );
-                          return (
-                            <option
-                              key={opt.value}
-                              value={opt.value}
-                              disabled={isSelectedElsewhere}
-                              style={{
-                                color: isSelectedElsewhere ? "#64748b" : "inherit",
-                              }}
-                            >
-                              {opt.label}
-                            </option>
-                          );
-                        })}
-                      </select>
+                      {/* 1. Event Trigger */}
+                      <div className="rule-field-wrap rule-field-event">
+                        <select
+                          className="rules-select"
+                          value={rule.event}
+                          onChange={(e) => handleUpdateRule(rule.id, "event", e.target.value)}
+                          aria-label="Event trigger"
+                        >
+                          {ALL_EVENT_OPTIONS.map((opt) => {
+                            const isSelectedElsewhere = currentList.some(
+                              (other) => other.id !== rule.id && other.event === opt.value
+                            );
+                            return (
+                              <option
+                                key={opt.value}
+                                value={opt.value}
+                                disabled={isSelectedElsewhere}
+                                style={{
+                                  color: isSelectedElsewhere ? "#64748b" : "inherit",
+                                }}
+                              >
+                                {opt.label}
+                              </option>
+                            );
+                          })}
+                        </select>
+                      </div>
 
                       {/* 2. Operator */}
-                      <select
-                        className="rules-select"
-                        value={rule.operator}
-                        onChange={(e) => handleUpdateRule(rule.id, "operator", e.target.value)}
-                        aria-label="Condition operator"
-                      >
-                        <option value="persists_for">persists for more than</option>
-                        <option value="immediate">happens immediately</option>
-                      </select>
+                      <div className="rule-field-wrap rule-field-operator">
+                        <select
+                          className="rules-select"
+                          value={rule.operator}
+                          onChange={(e) => handleUpdateRule(rule.id, "operator", e.target.value)}
+                          aria-label="Condition operator"
+                        >
+                          <option value="persists_for">persists for more than</option>
+                          <option value="immediate">happens immediately</option>
+                        </select>
+                      </div>
 
                       {/* 3. Threshold / Duration */}
-                      {rule.operator === "persists_for" ? (
-                        <div style={{ display: "flex", alignItems: "center", gap: "6px" }}>
-                          <input
-                            type="number"
-                            className="rules-input"
-                            min="1"
-                            max="300"
-                            value={rule.threshold}
-                            onChange={(e) =>
-                              handleUpdateRule(
-                                rule.id,
-                                "threshold",
-                                Math.max(1, parseInt(e.target.value) || 1)
-                              )
-                            }
-                            style={{ width: "100%", textAlign: "center" }}
-                            aria-label="Duration threshold"
-                          />
-                          <span style={{ fontSize: "0.82rem", color: "var(--text-muted, #94a3b8)", whiteSpace: "nowrap" }}>
-                            sec
-                          </span>
-                        </div>
-                      ) : (
-                        <div
-                          style={{
-                            padding: "6px 12px",
-                            background: "rgba(255, 255, 255, 0.05)",
-                            borderRadius: "6px",
-                            fontSize: "0.82rem",
-                            color: "var(--text-muted, #94a3b8)",
-                            textAlign: "center",
-                          }}
-                        >
-                          Instant
-                        </div>
-                      )}
+                      <div className="rule-field-wrap rule-field-threshold">
+                        {rule.operator === "persists_for" ? (
+                          <div style={{ display: "flex", alignItems: "center", gap: "6px" }}>
+                            <input
+                              type="number"
+                              className="rules-input"
+                              min="1"
+                              max="300"
+                              value={rule.threshold}
+                              onChange={(e) =>
+                                handleUpdateRule(
+                                  rule.id,
+                                  "threshold",
+                                  Math.max(1, parseInt(e.target.value) || 1)
+                                )
+                              }
+                              style={{ width: "100%", textAlign: "center" }}
+                              aria-label="Duration threshold"
+                            />
+                            <span style={{ fontSize: "0.82rem", color: "var(--text-muted, #94a3b8)", whiteSpace: "nowrap" }}>
+                              sec
+                            </span>
+                          </div>
+                        ) : (
+                          <div
+                            style={{
+                              padding: "6px 12px",
+                              background: "rgba(255, 255, 255, 0.05)",
+                              borderRadius: "6px",
+                              fontSize: "0.82rem",
+                              color: "var(--text-muted, #94a3b8)",
+                              textAlign: "center",
+                            }}
+                          >
+                            Instant
+                          </div>
+                        )}
+                      </div>
 
                       {/* 4. Searchable Operations Input */}
                       <div
+                        className="rule-field-wrap rule-field-actions"
                         style={{ position: "relative" }}
                         ref={isDropdownOpen ? dropdownRef : null}
                       >
@@ -420,26 +423,17 @@ export function RulesModal({ isOpen, onClose, rules, onSaveRules }) {
                       </div>
 
                       {/* 5. Remove Button */}
-                      <button
-                        type="button"
-                        onClick={() => handleRemoveRule(rule.id)}
-                        aria-label="Remove rule"
-                        style={{
-                          background: "none",
-                          border: "none",
-                          color: "var(--text-muted, #94a3b8)",
-                          cursor: "pointer",
-                          fontSize: "1.1rem",
-                          padding: "4px 8px",
-                          borderRadius: "4px",
-                          display: "flex",
-                          alignItems: "center",
-                          justifyContent: "center",
-                        }}
-                        title="Remove rule"
-                      >
-                        <FiX />
-                      </button>
+                      <div className="rule-field-delete">
+                        <button
+                          type="button"
+                          onClick={() => handleRemoveRule(rule.id)}
+                          aria-label="Remove rule"
+                          className="rule-delete-btn"
+                          title="Remove rule"
+                        >
+                          <FiX />
+                        </button>
+                      </div>
                     </div>
 
                     {/* Sub-row: Selected Action Pills (as in reference image) */}
@@ -502,8 +496,8 @@ export function RulesModal({ isOpen, onClose, rules, onSaveRules }) {
             </div>
           )}
 
-          {/* + ADD Button */}
-          <div style={{ marginTop: "16px" }}>
+          {/* + ADD Button (Centered as in reference image) */}
+          <div className="automations-add-wrap">
             <button
               type="button"
               onClick={handleAddRule}
