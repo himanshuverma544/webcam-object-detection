@@ -1,4 +1,5 @@
 import React, { useMemo, useState } from "react";
+import { FiActivity } from "react-icons/fi";
 import { getClassColor } from "./VideoViewport";
 
 export function MovementLog({
@@ -100,7 +101,7 @@ export function MovementLog({
         {filteredEvents.length === 0 ? (
           <div className="empty-movement-state">
             <div className="empty-movement-icon" aria-hidden="true">
-              ⇄
+              <FiActivity />
             </div>
             <p>No activity detected yet.</p>
             <span className="empty-hint">

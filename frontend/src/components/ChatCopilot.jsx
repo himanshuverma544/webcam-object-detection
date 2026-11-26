@@ -9,17 +9,18 @@ import {
   FiMinimize2,
   FiTrash2,
   FiX,
+  FiZap,
 } from "react-icons/fi";
 import { ObjectBoxModal } from "./ObjectBoxModal";
 import { sendChatMessage } from "../services/api";
 
 const QUICK_SUGGESTIONS = [
-  { label: "📹 Start Camera", prompt: "Start the camera" },
-  { label: "👤 Person & Phone", prompt: "Only detect person and cell phone" },
-  { label: "🛡️ Guard Scene", prompt: "Guard the scene now" },
-  { label: "🎯 70% Confidence", prompt: "Set confidence to 70%" },
-  { label: "📸 Snapshot Item", prompt: "Capture snapshot and save as 'My Mug'" },
-  { label: "📊 Show Metrics", prompt: "Show session metrics summary" },
+  { label: "Start Camera", prompt: "Start the camera" },
+  { label: "Person & Phone", prompt: "Only detect person and cell phone" },
+  { label: "Guard Scene", prompt: "Guard the scene now" },
+  { label: "70% Confidence", prompt: "Set confidence to 70%" },
+  { label: "Snapshot Item", prompt: "Capture snapshot and save as 'My Mug'" },
+  { label: "Show Metrics", prompt: "Show session metrics summary" },
 ];
 
 /**
@@ -58,7 +59,7 @@ export function ChatCopilot({
       id: "welcome",
       role: "assistant",
       content:
-        "👋 **Hello! I'm your Vision AI Copilot.**\n\nI can control your camera, toggle COCO classes, adjust sliders, guard the scene, and register custom items via webcam snapshots or uploaded photos.\n\n*How can I help you right now?*",
+        "**Hello! I'm your Vision AI Copilot.**\n\nI can control your camera, toggle COCO classes, adjust sliders, guard the scene, and register custom items via webcam snapshots or uploaded photos.\n\n*How can I help you right now?*",
       timestamp: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
     },
   ]);
@@ -325,7 +326,7 @@ export function ChatCopilot({
         {
           id: "err_" + Date.now(),
           role: "assistant",
-          content: `⚠️ **Error communicating with AI Copilot:** ${
+          content: `**Error communicating with AI Copilot:** ${
             err.message || "Request failed"
           }. Please try again.`,
           timestamp: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
@@ -355,7 +356,7 @@ export function ChatCopilot({
           title="Open AI Copilot (Natural Language Control)"
         >
           <div className="copilot-launcher-inner">
-            <span className="copilot-sparkle-icon">✨</span>
+            <span className="copilot-sparkle-icon"><FiZap /></span>
             <span className="copilot-launcher-text">AI Copilot</span>
             {unreadCount > 0 && <span className="copilot-unread-badge">{unreadCount}</span>}
           </div>
@@ -371,7 +372,7 @@ export function ChatCopilot({
           {/* Header */}
           <header className="copilot-header">
             <div className="copilot-header-info">
-              <span className="copilot-header-avatar">✨</span>
+              <span className="copilot-header-avatar"><FiZap /></span>
               <div>
                 <h3 className="copilot-title">Vision AI Copilot</h3>
                 <span className="copilot-status-badge">
@@ -436,7 +437,7 @@ export function ChatCopilot({
                   >
                     {m.role === "assistant" && (
                       <div className="copilot-msg-avatar" aria-hidden="true">
-                        ✨
+                        <FiZap />
                       </div>
                     )}
                     <div className="copilot-msg-bubble">
@@ -474,7 +475,7 @@ export function ChatCopilot({
 
                 {isLoading && (
                   <div className="copilot-message-row copilot-msg-assistant">
-                    <div className="copilot-msg-avatar">✨</div>
+                    <div className="copilot-msg-avatar"><FiZap /></div>
                     <div className="copilot-msg-bubble copilot-msg-thinking">
                       <span className="copilot-dot-pulse"></span>
                       <span className="copilot-dot-pulse"></span>
@@ -492,7 +493,7 @@ export function ChatCopilot({
                 <div className="copilot-multi-attachment-bar">
                   <div className="copilot-multi-attachment-header">
                     <span className="copilot-attachment-count-badge">
-                      📸 {attachedFiles.length} reference photo{attachedFiles.length > 1 ? "s" : ""} staged
+                      {attachedFiles.length} reference photo{attachedFiles.length > 1 ? "s" : ""} staged
                     </span>
                     <button
                       type="button"

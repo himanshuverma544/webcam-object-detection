@@ -113,6 +113,13 @@ export function useWebcamDetection() {
   // Detection results state
   const [detections, setDetections] = useState([]);
   const [detectionCount, setDetectionCount] = useState(0);
+  const [tamperStatus, setTamperStatus] = useState({
+    blinded: false,
+    moved: false,
+    brightness: 0,
+    sharpness: 0,
+    shift_magnitude: 0,
+  });
   const [inferenceTimeMs, setInferenceTimeMs] = useState(null);
   const [roundTripTimeMs, setRoundTripTimeMs] = useState(null);
   const [sourceFrameSize, setSourceFrameSize] = useState({
@@ -547,6 +554,9 @@ export function useWebcamDetection() {
 
       setDetections(filteredDetections);
       setDetectionCount(filteredDetections.length);
+      if (result?.tamper) {
+        setTamperStatus(result.tamper);
+      }
       setInferenceTimeMs(
         typeof result.inference_time_ms === "number"
           ? result.inference_time_ms
@@ -614,6 +624,7 @@ export function useWebcamDetection() {
     setCaptureIntervalMs,
     detections,
     detectionCount,
+    tamperStatus,
     inferenceTimeMs,
     roundTripTimeMs,
     sourceFrameSize,

@@ -32,6 +32,10 @@ from app.schemas.detection import (
     HealthResponse,
     ImageDimensions,
     ResetTrackResponse,
+    SendSMSRequest,
+    SendSMSResponse,
+    SMSMetricsRequest,
+    SMSMetricsResponse,
 )
 from app.services.chat_service import call_gemini_api, local_intent_fallback
 from app.services.custom_detector import (
@@ -41,6 +45,7 @@ from app.services.custom_detector import (
 )
 from app.services.detector import YOLOObjectDetector
 from app.services.email_service import send_metrics_email
+from app.services.sms_service import send_greeting_sms, send_metrics_sms, send_sms
 
 logger = logging.getLogger(__name__)
 
@@ -321,6 +326,7 @@ async def detect_objects(
                 confidence_threshold=resolved_confidence,
                 detection_count=len(custom_dets),
                 detections=custom_dets,
+                tamper=detector.check_tamper(image_bgr),
             )
 
         coco_resp = detector.detect(
@@ -350,6 +356,7 @@ async def detect_objects(
             confidence_threshold=coco_resp.confidence_threshold,
             detection_count=len(merged),
             detections=merged,
+            tamper=coco_resp.tamper,
         )
     except ValueError as exc:
         raise HTTPException(
@@ -411,6 +418,121 @@ async def email_metrics(
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to dispatch email: {exc}",
+        ) from exc
+
+
+@router.post(
+    "/metrics/sms",
+    response_model=SMSMetricsResponse,
+    summary="Send structured session metrics summary via SMS",
+)
+async def sms_metrics(
+    payload: SMSMetricsRequest,
+    settings: Settings = Depends(get_settings),
+) -> SMSMetricsResponse:
+    """Format and send session detection summary via Twilio SMS."""
+    recipient = (
+        (payload.recipient_phone or "").strip()
+        or (settings.recipient_phone_number or "").strip()
+    )
+    if not recipient:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Recipient phone number is required. Provide recipient_phone or set RECIPIENT_PHONE_NUMBER in backend/.env",
+        )
+
+    try:
+        result = send_metrics_sms(
+            metrics=payload.metrics,
+            recipient=recipient,
+            settings=settings,
+        )
+        return SMSMetricsResponse(
+            status="sent",
+            message=f"Metrics summary SMS successfully sent to {recipient}",
+            sid=result["sid"],
+            recipient=result["recipient"],
+            delivery_status=result.get("delivery_status"),
+            summary_preview=result.get("summary_preview"),
+        )
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(exc),
+        ) from exc
+    except Exception as exc:
+        logger.exception("Failed to send metrics SMS.")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to dispatch SMS: {exc}",
+        ) from exc
+
+
+@router.post(
+    "/sms/greeting",
+    response_model=SendSMSResponse,
+    summary="Send test greeting SMS via Twilio",
+)
+async def trigger_greeting_sms(
+    payload: Optional[SendSMSRequest] = None,
+    settings: Settings = Depends(get_settings),
+) -> SendSMSResponse:
+    """Send a friendly greeting SMS to verify Twilio integration."""
+    target_recipient = (payload.recipient if payload and payload.recipient else None)
+    try:
+        result = send_greeting_sms(recipient=target_recipient, settings=settings)
+        return SendSMSResponse(
+            status="sent",
+            message="Greeting SMS sent successfully",
+            sid=result["sid"],
+            recipient=result["recipient"],
+            delivery_status=result.get("delivery_status"),
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+    except Exception as exc:
+        logger.exception("Failed to send greeting SMS.")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to dispatch SMS: {exc}",
+        ) from exc
+
+
+@router.post(
+    "/sms/send",
+    response_model=SendSMSResponse,
+    summary="Send custom SMS via Twilio",
+)
+async def trigger_custom_sms(
+    payload: SendSMSRequest,
+    settings: Settings = Depends(get_settings),
+) -> SendSMSResponse:
+    """Send a custom SMS message via Twilio."""
+    if not payload.message or not payload.message.strip():
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Message content cannot be empty.",
+        )
+    try:
+        result = send_sms(
+            message=payload.message.strip(),
+            recipient=payload.recipient,
+            settings=settings,
+        )
+        return SendSMSResponse(
+            status="sent",
+            message="SMS sent successfully",
+            sid=result["sid"],
+            recipient=result["recipient"],
+            delivery_status=result.get("delivery_status"),
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+    except Exception as exc:
+        logger.exception("Failed to send custom SMS.")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to dispatch SMS: {exc}",
         ) from exc
 
 

@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useState } from "react";
 import ReactMarkdown from "react-markdown";
-import { sendMetricsEmail } from "../services/api";
+import { sendMetricsEmail, sendMetricsSMS } from "../services/api";
 import { generateExecutiveSummary } from "../utils/summaryGenerator";
 
 const DEFAULT_RECIPIENT = (import.meta.env.VITE_DEFAULT_RECIPIENT_EMAIL || "").trim();
@@ -10,6 +10,8 @@ export function MetricsModal({ isOpen, onClose, metrics, activeTab = "metrics", 
   const [viewMode, setViewMode] = useState(activeTab || "metrics"); // 'metrics' | 'summary'
   const [emailStatus, setEmailStatus] = useState("idle"); // 'idle' | 'sending' | 'success' | 'error'
   const [emailMessage, setEmailMessage] = useState("");
+  const [smsStatus, setSmsStatus] = useState("idle"); // 'idle' | 'sending' | 'success' | 'error'
+  const [smsMessage, setSmsMessage] = useState("");
 
   // Close on Escape key
   useEffect(() => {
@@ -28,6 +30,8 @@ export function MetricsModal({ isOpen, onClose, metrics, activeTab = "metrics", 
     if (isOpen) {
       setEmailStatus("idle");
       setEmailMessage("");
+      setSmsStatus("idle");
+      setSmsMessage("");
       setCopied(false);
       setViewMode(activeTab || "metrics");
     }
@@ -67,6 +71,19 @@ export function MetricsModal({ isOpen, onClose, metrics, activeTab = "metrics", 
     } catch (err) {
       setEmailStatus("error");
       setEmailMessage(err.message || "Failed to send email. Check backend settings.");
+    }
+  };
+
+  const handleSendSMS = async () => {
+    setSmsStatus("sending");
+    setSmsMessage("");
+    try {
+      const res = await sendMetricsSMS(metrics);
+      setSmsStatus("success");
+      setSmsMessage(res.message || "Summary SMS successfully dispatched");
+    } catch (err) {
+      setSmsStatus("error");
+      setSmsMessage(err.message || "Failed to send SMS. Check Twilio settings in backend/.env");
     }
   };
 
@@ -424,6 +441,41 @@ export function MetricsModal({ isOpen, onClose, metrics, activeTab = "metrics", 
           </div>
         )}
 
+        {/* SMS status banner if active */}
+        {smsMessage && (
+          <div
+            style={{
+              padding: "10px 24px",
+              fontSize: "0.82rem",
+              background:
+                smsStatus === "success"
+                  ? "rgba(16, 185, 129, 0.15)"
+                  : "rgba(239, 68, 68, 0.15)",
+              color: smsStatus === "success" ? "#34d399" : "#fca5a5",
+              borderTop: "1px solid var(--border-subtle)",
+              display: "flex",
+              justifyContent: "space-between",
+              alignItems: "center",
+            }}
+          >
+            <span>{smsMessage}</span>
+            <button
+              type="button"
+              onClick={() => setSmsMessage("")}
+              style={{
+                background: "none",
+                border: "none",
+                color: "inherit",
+                cursor: "pointer",
+                fontWeight: "bold",
+                fontSize: "1rem",
+              }}
+            >
+              &times;
+            </button>
+          </div>
+        )}
+
         {/* Modal Footer */}
         <div className="modal-footer">
           {viewMode === "summary" ? (
@@ -444,6 +496,21 @@ export function MetricsModal({ isOpen, onClose, metrics, activeTab = "metrics", 
                 title="Copy summary report to clipboard"
               >
                 {copied ? "Copied to Clipboard!" : "Copy Summary"}
+              </button>
+
+              <button
+                type="button"
+                className="btn btn-primary"
+                onClick={handleSendSMS}
+                disabled={smsStatus === "sending"}
+                title="Send detection summary via Twilio SMS"
+                style={{ background: "#38bdf8", borderColor: "#0284c7" }}
+              >
+                {smsStatus === "sending"
+                  ? "Sending Message..."
+                  : smsStatus === "success"
+                  ? "Message Sent"
+                  : "Send Message"}
               </button>
 
               <button
@@ -477,6 +544,21 @@ export function MetricsModal({ isOpen, onClose, metrics, activeTab = "metrics", 
                   : emailStatus === "success"
                   ? "Email Sent"
                   : "Email Metrics"}
+              </button>
+
+              <button
+                type="button"
+                className="btn btn-primary"
+                onClick={handleSendSMS}
+                disabled={smsStatus === "sending"}
+                title="Send detection summary via Twilio SMS"
+                style={{ background: "#0284c7", borderColor: "#0284c7" }}
+              >
+                {smsStatus === "sending"
+                  ? "Sending Message..."
+                  : smsStatus === "success"
+                  ? "Message Sent"
+                  : "Send Message"}
               </button>
 
               <button

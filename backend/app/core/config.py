@@ -76,6 +76,14 @@ class Settings(BaseSettings):
     gemini_api_key: Optional[str] = Field(default=None, alias="GEMINI_API_KEY")
     gemini_model: str = Field(default="gemini-3.1-flash-lite", alias="GEMINI_MODEL")
 
+    # Twilio SMS Settings
+    twilio_account_sid: Optional[str] = Field(default=None, alias="TWILIO_ACCOUNT_SID")
+    twilio_auth_token: Optional[str] = Field(default=None, alias="TWILIO_AUTH_TOKEN")
+    twilio_phone_number: Optional[str] = Field(default=None, alias="TWILIO_PHONE_NUMBER")
+    recipient_phone_number: Optional[str] = Field(
+        default=None, alias="RECIPIENT_PHONE_NUMBER"
+    )
+
     # SMTP / Fallback Email Settings
     smtp_host: str = Field(default="smtp.gmail.com", alias="SMTP_HOST")
     smtp_port: int = Field(default=587, alias="SMTP_PORT")

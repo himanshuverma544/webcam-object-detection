@@ -116,6 +116,31 @@ class ResetTrackResponse(BaseModel):
     )
 
 
+class TamperStatus(BaseModel):
+    """Tamper and camera condition assessment."""
+
+    blinded: bool = Field(
+        default=False,
+        description="True if camera is covered, blocked, or in total darkness",
+    )
+    moved: bool = Field(
+        default=False,
+        description="True if camera was physically shifted or bumped",
+    )
+    brightness: float = Field(
+        default=0.0,
+        description="Average frame brightness (0-255)",
+    )
+    sharpness: float = Field(
+        default=0.0,
+        description="Laplacian edge variance (texture/sharpness)",
+    )
+    shift_magnitude: float = Field(
+        default=0.0,
+        description="Global frame shift magnitude in pixels",
+    )
+
+
 class DetectionResponse(BaseModel):
     """Structured response returned by POST /detect."""
 
@@ -146,6 +171,10 @@ class DetectionResponse(BaseModel):
     detections: List[DetectionItem] = Field(
         default_factory=list,
         description="List of detected objects sorted by descending confidence",
+    )
+    tamper: Optional[TamperStatus] = Field(
+        default=None,
+        description="Camera tamper indicators (blinded, moved)",
     )
 
 
@@ -187,6 +216,55 @@ class EmailMetricsResponse(BaseModel):
         description="Destination email address where report was dispatched",
         examples=["user@example.com"],
     )
+
+
+class SendSMSRequest(BaseModel):
+    """Request payload for sending SMS."""
+
+    recipient: Optional[str] = Field(
+        default=None,
+        description="Target phone number in E.164 format (e.g. +919410986033). Uses RECIPIENT_PHONE_NUMBER if omitted.",
+        examples=["+919410986033"],
+    )
+    message: Optional[str] = Field(
+        default=None,
+        description="Custom message content. If omitted, sends greeting.",
+    )
+
+
+class SendSMSResponse(BaseModel):
+    """Response payload after sending an SMS."""
+
+    status: str = Field(..., description="Status ('sent')", examples=["sent"])
+    message: str = Field(..., description="Confirmation text", examples=["SMS sent successfully"])
+    sid: str = Field(..., description="Twilio Message SID", examples=["SMxxxxxxxx"])
+    recipient: str = Field(..., description="Target phone number", examples=["+919410986033"])
+    delivery_status: Optional[str] = Field(default=None, description="Initial delivery status from Twilio")
+
+
+class SMSMetricsRequest(BaseModel):
+    """Request payload for sending session metrics summary via SMS."""
+
+    recipient_phone: Optional[str] = Field(
+        default=None,
+        description="Target phone number in E.164 format. Falls back to RECIPIENT_PHONE_NUMBER if omitted.",
+        examples=["+919410986033"],
+    )
+    metrics: Dict[str, Any] = Field(
+        ...,
+        description="Complete structured session metrics data payload",
+    )
+
+
+class SMSMetricsResponse(BaseModel):
+    """Response payload after dispatching metrics summary via SMS."""
+
+    status: str = Field(..., description="Delivery outcome status ('sent')", examples=["sent"])
+    message: str = Field(..., description="Human-readable delivery confirmation", examples=["Metrics summary SMS sent successfully"])
+    sid: str = Field(..., description="Twilio Message SID", examples=["SMxxxxxxxx"])
+    recipient: str = Field(..., description="Destination phone number", examples=["+919410986033"])
+    delivery_status: Optional[str] = Field(default=None, description="Twilio delivery status")
+    summary_preview: Optional[str] = Field(default=None, description="Preview of generated SMS summary text")
 
 
 class CustomItemOut(BaseModel):

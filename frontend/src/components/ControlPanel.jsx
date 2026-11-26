@@ -26,6 +26,8 @@ export function ControlPanel({
   onStartCamera,
   onStopCamera,
   onToggleDetection,
+  onOpenRulesModal,
+  activeRulesCount = 0,
 }) {
   const isCameraActive = cameraStatus === "active";
   const isCameraStarting = cameraStatus === "starting";
@@ -34,6 +36,7 @@ export function ControlPanel({
     <section className="control-panel-card" aria-label="Detection controls and metrics">
       <div className="controls-row">
         <div className="button-group">
+          {/* 1. Start / Stop Camera */}
           {!isCameraActive ? (
             <button
               type="button"
@@ -53,6 +56,40 @@ export function ControlPanel({
             </button>
           )}
 
+          {/* 2. Resume / Pause Detection */}
+          <button
+            type="button"
+            className={`btn ${isDetecting ? "btn-warning" : "btn-secondary"}`}
+            onClick={onToggleDetection}
+            disabled={!isCameraActive}
+            title={isDetecting ? "Pause inference loop" : "Resume real-time detection"}
+          >
+            {isDetecting ? "Pause Detection" : "Resume Detection"}
+          </button>
+
+          {/* 3. Guard Scene */}
+          <button
+            type="button"
+            className={`btn ${isGuarded ? "btn-armed" : "btn-guard"}`}
+            onClick={onToggleGuard}
+            disabled={!isCameraActive}
+            title={isGuarded ? "Disarm guarded scene baseline" : "Lock currently detected items as guarded baseline"}
+          >
+            {isGuarded ? `Disarm Scene (${guardedCount})` : `Guard Scene (${detectionCount})`}
+          </button>
+
+          {/* 4. Set Rules / Action */}
+          <button
+            type="button"
+            className="btn btn-secondary btn-rules"
+            onClick={onOpenRulesModal}
+            title="Configure automated Event-Action security rules"
+            style={{ borderColor: "var(--accent-primary, #6366f1)" }}
+          >
+            Set Rules/Action {activeRulesCount > 0 ? `(${activeRulesCount})` : ""}
+          </button>
+
+          {/* 5. Show Metrics */}
           <button
             type="button"
             className="btn btn-metrics"
@@ -65,25 +102,6 @@ export function ControlPanel({
             }
           >
             Show Metrics
-          </button>
-
-          <button
-            type="button"
-            className={`btn ${isDetecting ? "btn-warning" : "btn-secondary"}`}
-            onClick={onToggleDetection}
-            disabled={!isCameraActive}
-          >
-            {isDetecting ? "Pause Detection" : "Resume Detection"}
-          </button>
-
-          <button
-            type="button"
-            className={`btn ${isGuarded ? "btn-armed" : "btn-guard"}`}
-            onClick={onToggleGuard}
-            disabled={!isCameraActive}
-            title={isGuarded ? "Disarm guarded scene baseline" : "Lock currently detected items as guarded baseline"}
-          >
-            {isGuarded ? `Disarm Scene (${guardedCount})` : `Guard Scene (${detectionCount})`}
           </button>
         </div>
 

@@ -49,8 +49,7 @@ cp .env.example .env
 Bind to `127.0.0.1:8000` (localhost):
 
 ```bash
-cd backend
-.venv/bin/uvicorn app.main:app --host 127.0.0.1 --port 8000 --reload
+uss
 ```
 
 - **API Base URL:** `http://127.0.0.1:8000`

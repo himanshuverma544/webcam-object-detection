@@ -12,6 +12,7 @@ from app.schemas.detection import (
     DetectionItem,
     DetectionResponse,
     ImageDimensions,
+    TamperStatus,
 )
 
 logger = logging.getLogger(__name__)
@@ -123,6 +124,8 @@ class YOLOObjectDetector:
         self.load_error: Optional[str] = None
         self.device: str = "cpu"
         self.classes: Dict[int, str] = dict(COCO_CLASSES)
+        self.prev_gray_frame: Optional[np.ndarray] = None
+        self.tamper_blinded_streak: int = 0
 
     @property
     def is_ready(self) -> bool:
@@ -230,7 +233,9 @@ class YOLOObjectDetector:
         self.model_loaded = False
 
     def reset_tracker(self) -> None:
-        """Reset internal ByteTrack tracking state and track IDs."""
+        """Reset internal ByteTrack tracking state, track IDs, and tamper history."""
+        self.prev_gray_frame = None
+        self.tamper_blinded_streak = 0
         if (
             self.model is not None
             and hasattr(self.model, "predictor")
@@ -249,6 +254,54 @@ class YOLOObjectDetector:
                     except Exception as exc:
                         logger.warning("Error calling tracker.reset_id(): %s", exc)
             logger.info("Tracker states have been reset.")
+
+    def check_tamper(self, frame: np.ndarray) -> TamperStatus:
+        """Analyze frame for camera occlusion (blinded) and sudden global shift (moved/bumped)."""
+        try:
+            gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+            mean_val, std_dev = cv2.meanStdDev(gray)
+            brightness = float(mean_val[0][0])
+            std_val = float(std_dev[0][0])
+            sharpness = float(cv2.Laplacian(gray, cv2.CV_64F).var())
+
+            # Blinded condition:
+            # 1. Pitch dark (covered with hand/tape) -> brightness < 20 and low variance
+            # 2. Or covered with flat object (cloth/paper) -> variance < 6 and sharpness < 12
+            is_blinded_frame = (brightness < 20.0 and std_val < 12.0) or (std_val < 6.0 and sharpness < 12.0)
+            if is_blinded_frame:
+                self.tamper_blinded_streak += 1
+            else:
+                self.tamper_blinded_streak = 0
+
+            # Persistent blinded: 2 or more consecutive frames (prevents single-frame glitches)
+            is_blinded = self.tamper_blinded_streak >= 2
+
+            # Moved / Bumped condition:
+            # Downscale for fast phase correlation (global 2D translation)
+            small = cv2.resize(gray, (160, 120)).astype(np.float32)
+            shift_magnitude = 0.0
+            is_moved = False
+
+            if self.prev_gray_frame is not None and not is_blinded:
+                # Phase correlation between previous and current frame
+                (shift_x, shift_y), response = cv2.phaseCorrelate(self.prev_gray_frame, small)
+                shift_magnitude = float(np.hypot(shift_x, shift_y))
+                # Sudden shift > 12 pixels on 160x120 frame (~10% global shift) with strong correlation
+                if shift_magnitude > 12.0 and response > 0.35:
+                    is_moved = True
+
+            self.prev_gray_frame = small
+
+            return TamperStatus(
+                blinded=is_blinded,
+                moved=is_moved,
+                brightness=round(brightness, 1),
+                sharpness=round(sharpness, 1),
+                shift_magnitude=round(shift_magnitude, 1),
+            )
+        except Exception as exc:
+            logger.warning("Error evaluating tamper status: %s", exc)
+            return TamperStatus()
 
     def get_classes(self) -> Dict[int, str]:
         """Return mapping of supported class IDs to class labels."""
@@ -315,6 +368,7 @@ class YOLOObjectDetector:
         # Decode image safely with OpenCV
         frame = self.decode_image(image_bytes)
         height, width = int(frame.shape[0]), int(frame.shape[1])
+        tamper_status = self.check_tamper(frame)
 
         # If empty classes list was explicitly provided (e.g. no valid matched classes), return zero detections immediately
         if classes is not None and len(classes) == 0:
@@ -326,6 +380,7 @@ class YOLOObjectDetector:
                 confidence_threshold=round(conf_threshold, 4),
                 detection_count=0,
                 detections=[],
+                tamper=tamper_status,
             )
 
         # Run YOLO inference and time execution
@@ -447,4 +502,5 @@ class YOLOObjectDetector:
             confidence_threshold=round(conf_threshold, 4),
             detection_count=len(detections),
             detections=detections,
+            tamper=tamper_status,
         )

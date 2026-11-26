@@ -1,15 +1,18 @@
 import React, { useCallback, useEffect, useRef, useState } from "react";
+import { FiAlertTriangle, FiX } from "react-icons/fi";
 import { ChatCopilot } from "./components/ChatCopilot";
 import { ControlPanel } from "./components/ControlPanel";
 import { DetectionList } from "./components/DetectionList";
 import { Header } from "./components/Header";
 import { MetricsModal } from "./components/MetricsModal";
 import { MissingAlertBanner } from "./components/MissingAlertBanner";
+import { RulesModal, DEFAULT_RULES } from "./components/RulesModal";
 import { VideoViewport } from "./components/VideoViewport";
 import { useSceneTracker } from "./hooks/useSceneTracker";
 import { useSessionMetrics } from "./hooks/useSessionMetrics";
 import { useWebcamDetection } from "./hooks/useWebcamDetection";
-import { API_BASE_URL, resetTrack, sendMetricsEmail } from "./services/api";
+import { API_BASE_URL, resetTrack, sendMetricsEmail, sendMetricsSMS } from "./services/api";
+import { startSirenAlert, stopSirenAlert } from "./utils/audioAlert";
 import { generateExecutiveSummary } from "./utils/summaryGenerator";
 import "./App.css";
 
@@ -28,6 +31,7 @@ export function App() {
     setCaptureIntervalMs,
     detections,
     detectionCount,
+    tamperStatus,
     inferenceTimeMs,
     roundTripTimeMs,
     sourceFrameSize,
@@ -101,6 +105,40 @@ export function App() {
     }
   }, [emailNotice]);
 
+  // Event-Action Rules Engine State
+  const [isRulesModalOpen, setIsRulesModalOpen] = useState(false);
+  const [rules, setRules] = useState(() => {
+    try {
+      const saved = localStorage.getItem("event_action_rules_v2");
+      return saved ? JSON.parse(saved) : DEFAULT_RULES;
+    } catch {
+      return DEFAULT_RULES;
+    }
+  });
+  const [alarmNotice, setAlarmNotice] = useState(null);
+  const [isScreenFlashing, setIsScreenFlashing] = useState(false);
+  const lastActionTriggerRef = useRef({});
+
+  const handleSaveRules = useCallback((updatedRules) => {
+    setRules(updatedRules);
+    try {
+      localStorage.setItem("event_action_rules_v2", JSON.stringify(updatedRules));
+    } catch {
+      // non-fatal
+    }
+  }, []);
+
+  const handleSilenceAlarm = useCallback(() => {
+    stopSirenAlert();
+    if (typeof window !== "undefined" && "speechSynthesis" in window) {
+      try {
+        window.speechSynthesis.cancel();
+      } catch (e) {}
+    }
+    setIsScreenFlashing(false);
+    setAlarmNotice(null);
+  }, []);
+
   // Session metrics accumulator
   const {
     completedMetrics,
@@ -113,6 +151,7 @@ export function App() {
     isGuarded,
     detections,
     detectionCount,
+    tamperStatus,
     inferenceTimeMs,
     roundTripTimeMs,
     confidence,
@@ -251,11 +290,11 @@ export function App() {
             if (target) {
               removeCustomItem(target.id);
               if (typeof onNotifyCopilot === "function") {
-                onNotifyCopilot(`🗑️ **Deleted!** Custom item **'${target.name}'** has been removed.`);
+                onNotifyCopilot(`**Deleted!** Custom item **'${target.name}'** has been removed.`);
               }
             } else {
               if (typeof onNotifyCopilot === "function") {
-                onNotifyCopilot(`⚠️ **Notice:** Custom item '${payload.item_ref}' was not found.`);
+                onNotifyCopilot(`**Notice:** Custom item '${payload.item_ref}' was not found.`);
               }
             }
             break;
@@ -269,7 +308,7 @@ export function App() {
             if (!target) {
               if (typeof onNotifyCopilot === "function") {
                 onNotifyCopilot(
-                  `⚠️ **Notice:** Custom item '${payload.item_ref}' was not found. Please create it first.`
+                  `**Notice:** Custom item '${payload.item_ref}' was not found. Please create it first.`
                 );
               }
               break;
@@ -287,7 +326,7 @@ export function App() {
               if (typeof onNotifyCopilot === "function") {
                 const count = filesToUpload.length;
                 onNotifyCopilot(
-                  `✅ **Updated!** Added ${count} new reference photo${
+                  `**Updated!** Added ${count} new reference photo${
                     count > 1 ? "s" : ""
                   } to **'${target.name}'**.`
                 );
@@ -295,7 +334,7 @@ export function App() {
             } else {
               if (typeof onNotifyCopilot === "function") {
                 onNotifyCopilot(
-                  `📸 Please take a snapshot or upload photos first, then send "Add these photos to '${target.name}'".`
+                  `Please take a snapshot or upload photos first, then send "Add these photos to '${target.name}'".`
                 );
               }
             }
@@ -307,7 +346,7 @@ export function App() {
               setSimilarityThreshold(payload.value);
               if (typeof onNotifyCopilot === "function") {
                 const pct = Math.round(payload.value * 100);
-                onNotifyCopilot(`🎯 Match strictness set to **${pct}%**.`);
+                onNotifyCopilot(`Match strictness set to **${pct}%**.`);
               }
             }
             break;
@@ -323,7 +362,7 @@ export function App() {
             if (isDuplicate) {
               if (typeof onNotifyCopilot === "function") {
                 onNotifyCopilot(
-                  `⚠️ **Notice:** A custom item named '**${itemName}**' already exists. Please choose a unique name or delete the existing item first.`
+                  `**Notice:** A custom item named '**${itemName}**' already exists. Please choose a unique name or delete the existing item first.`
                 );
               }
               break;
@@ -342,7 +381,7 @@ export function App() {
               if (typeof onNotifyCopilot === "function") {
                 const count = filesToUpload.length;
                 onNotifyCopilot(
-                  `✅ **Created!** Custom reference item **'${itemName}'** has been saved with ${count} reference photo${count > 1 ? "s" : ""} and enabled for detection.`
+                  `**Created!** Custom reference item **'${itemName}'** has been saved with ${count} reference photo${count > 1 ? "s" : ""} and enabled for detection.`
                 );
               }
               break;
@@ -351,7 +390,7 @@ export function App() {
             if (cameraStatus !== "active") {
               if (typeof onNotifyCopilot === "function") {
                 onNotifyCopilot(
-                  `⚠️ **Notice:** The camera is currently stopped. Please start the camera first so I can capture a snapshot of your item.`
+                  `**Notice:** The camera is currently stopped. Please start the camera first so I can capture a snapshot of your item.`
                 );
               }
               break;
@@ -360,7 +399,7 @@ export function App() {
             if (detectionListRef.current?.isCropModalOpen()) {
               if (typeof onNotifyCopilot === "function") {
                 onNotifyCopilot(
-                  `⚠️ **Notice:** A crop dialog is already open. Please complete or cancel the current selection first.`
+                  `**Notice:** A crop dialog is already open. Please complete or cancel the current selection first.`
                 );
               }
               break;
@@ -370,7 +409,7 @@ export function App() {
               .then((file) => {
                 if (!file) {
                   if (typeof onNotifyCopilot === "function") {
-                    onNotifyCopilot(`⚠️ **Notice:** Failed to capture live snapshot from camera.`);
+                    onNotifyCopilot(`**Notice:** Failed to capture live snapshot from camera.`);
                   }
                   return;
                 }
@@ -382,14 +421,14 @@ export function App() {
                     onComplete: (savedName) => {
                       if (typeof onNotifyCopilot === "function") {
                         onNotifyCopilot(
-                          `✅ **Created!** Custom reference item **'${savedName}'** has been saved with your custom crop and enabled for detection.`
+                          `**Created!** Custom reference item **'${savedName}'** has been saved with your custom crop and enabled for detection.`
                         );
                       }
                     },
                     onCancel: (cancelledName) => {
                       if (typeof onNotifyCopilot === "function") {
                         onNotifyCopilot(
-                          `ℹ️ Custom item creation for **'${cancelledName}'** was cancelled.`
+                          `Custom item creation for **'${cancelledName}'** was cancelled.`
                         );
                       }
                     },
@@ -399,7 +438,7 @@ export function App() {
               .catch((err) => {
                 if (typeof onNotifyCopilot === "function") {
                   onNotifyCopilot(
-                    `⚠️ **Error:** Could not capture frame: ${err.message || "Unknown error"}`
+                    `**Error:** Could not capture frame: ${err.message || "Unknown error"}`
                   );
                 }
               });
@@ -480,11 +519,11 @@ export function App() {
               }
               setCopiedSummaryTick((t) => t + 1);
               if (typeof onNotifyCopilot === "function") {
-                onNotifyCopilot("📋 **Copied!** Executive session summary has been copied to your clipboard.");
+                onNotifyCopilot("**Copied!** Executive session summary has been copied to your clipboard.");
               }
             } else {
               if (typeof onNotifyCopilot === "function") {
-                onNotifyCopilot("⚠️ **Notice:** No session metrics recorded yet. Start and stop the camera first to generate a summary.");
+                onNotifyCopilot("**Notice:** No session metrics recorded yet. Start and stop the camera first to generate a summary.");
               }
             }
             break;
@@ -517,7 +556,7 @@ export function App() {
                     message: successMsg,
                   });
                   if (typeof onNotifyCopilot === "function") {
-                    onNotifyCopilot(`📧 **Email Sent:** ${successMsg}`);
+                    onNotifyCopilot(`**Email Sent:** ${successMsg}`);
                   }
                 })
                 .catch((err) => {
@@ -529,7 +568,7 @@ export function App() {
                     message: errorMsg,
                   });
                   if (typeof onNotifyCopilot === "function") {
-                    onNotifyCopilot(`❌ **Email Failed:** ${errorMsg}`);
+                    onNotifyCopilot(`**Email Failed:** ${errorMsg}`);
                   }
                 });
             } else {
@@ -540,7 +579,7 @@ export function App() {
                 message: warnMsg,
               });
               if (typeof onNotifyCopilot === "function") {
-                onNotifyCopilot(`⚠️ **Notice:** ${warnMsg}`);
+                onNotifyCopilot(`**Notice:** ${warnMsg}`);
               }
             }
             break;
@@ -590,8 +629,180 @@ export function App() {
     ]
   );
 
+  // Evaluate active rules against live detection & tamper telemetry
+  useEffect(() => {
+    if (cameraStatus !== "active" || !isDetecting) return;
+
+    rules.forEach((rule) => {
+      if (!rule.enabled) return;
+      const now = Date.now();
+      const lastTrigger = lastActionTriggerRef.current[rule.id] || 0;
+
+      const triggerAction = (reason) => {
+        const actionList = Array.isArray(rule.actions)
+          ? rule.actions
+          : rule.action
+          ? [rule.action]
+          : ["alarm_siren"];
+
+        if (actionList.length === 0) return;
+
+        // Cooldown: limit repeat trigger per rule (15s for siren, 60s for SMS/email)
+        const hasExternalNotice =
+          actionList.includes("send_sms") || actionList.includes("send_email");
+        const cooldownMs = hasExternalNotice ? 45000 : 15000;
+        if (now - lastTrigger < cooldownMs) return;
+        lastActionTriggerRef.current[rule.id] = now;
+
+        actionList.forEach((act) => {
+          if (act === "alarm_siren") {
+            startSirenAlert(30);
+          } else if (act === "send_sms") {
+            const metricsPayload =
+              completedMetrics || latestMetricsRef.current || { statusMessage: reason };
+            sendMetricsSMS({ ...metricsPayload, statusMessage: reason }).catch(() => {});
+          } else if (act === "send_email") {
+            const metricsPayload =
+              completedMetrics || latestMetricsRef.current || { statusMessage: reason };
+            sendMetricsEmail({ ...metricsPayload, statusMessage: reason }).catch(() => {});
+          } else if (act === "voice_tts") {
+            if (typeof window !== "undefined" && "speechSynthesis" in window) {
+              try {
+                window.speechSynthesis.cancel();
+                const utterance = new SpeechSynthesisUtterance(reason || "Security warning: Security event detected!");
+                utterance.rate = 1.05;
+                window.speechSynthesis.speak(utterance);
+              } catch (e) {}
+            }
+          } else if (act === "screen_flash") {
+            setIsScreenFlashing(true);
+            setTimeout(() => setIsScreenFlashing(false), 3000);
+          } else if (act === "capture_snapshot") {
+            if (typeof captureLiveSnapshotFile === "function") {
+              captureLiveSnapshotFile("Security_Incident").catch(() => {});
+            }
+          } else if (act === "log_incident") {
+            setEmailNotice({ type: "warning", message: `Security Incident: ${reason}` });
+          } else if (act === "webhook_dispatch") {
+            console.log("[Webhook Dispatch] Triggered for reason:", reason);
+          }
+        });
+
+        setAlarmNotice({ type: "rule_action", reason, actions: actionList, time: new Date() });
+      };
+
+      // 1. Camera Blinded / Lens Covered
+      if (rule.event === "camera_blinded" && tamperStatus?.blinded) {
+        triggerAction("Camera Blinded / Lens Covered!");
+      }
+
+      // 2. Camera Moved / Bumped
+      if (rule.event === "camera_moved" && tamperStatus?.moved) {
+        triggerAction("Camera Physically Moved or Bumped!");
+      }
+
+      // 3. Guarded Item Gone Missing
+      if (rule.event === "item_missing" && isGuarded && missingItems.length > 0) {
+        const thresholdSec = rule.operator === "persists_for" ? (rule.threshold || 5) : 0;
+        const maxDurationSec = Math.max(
+          ...missingItems.map((item) => (now - (item.missingSince || now)) / 1000)
+        );
+        if (maxDurationSec >= thresholdSec) {
+          triggerAction(`Guarded Item Missing for ${Math.round(maxDurationSec)}s!`);
+        }
+      }
+
+      // 4. Guarded Item Displaced / Moved
+      if (rule.event === "item_moved" && isGuarded && activeMovingCount > 0) {
+        triggerAction("Guarded Item Displaced / Relocated!");
+      }
+
+      // 5. Guarded Item Restored / Recovered
+      if (rule.event === "item_restored" && isGuarded && guardedCount > 0 && missingItems.length === 0 && alarmNotice) {
+        triggerAction("Guarded Item Restored to Scene!");
+      }
+
+      // 6. Person Intrusion Detected
+      if (rule.event === "person_detected") {
+        const hasPerson = detections.some((d) => d.label === "person");
+        if (hasPerson) {
+          triggerAction("Person Intrusion Detected in Frame!");
+        }
+      }
+
+      // 7. Proximity Alert (Person Near Item)
+      if (rule.event === "proximity_alert" && isGuarded) {
+        const persons = detections.filter((d) => d.label === "person");
+        const guardedDetections = detections.filter(
+          (d) => d.isGuarded || (d.track_id && activeTracksMap?.[d.track_id]?.isGuarded)
+        );
+        const hasOverlap = persons.some((p) =>
+          guardedDetections.some((g) => {
+            if (!p.box || !g.box) return false;
+            const [px1, py1, px2, py2] = p.box;
+            const [gx1, gy1, gx2, gy2] = g.box;
+            return !(px2 < gx1 - 0.05 || px1 > gx2 + 0.05 || py2 < gy1 - 0.05 || py1 > gy2 + 0.05);
+          })
+        );
+        if (hasOverlap) {
+          triggerAction("Proximity Alert: Person Near Guarded Item!");
+        }
+      }
+
+      // 8. Unattended Room (Empty Scene)
+      if (rule.event === "unattended_room" && isGuarded) {
+        const hasPerson = detections.some((d) => d.label === "person");
+        if (!hasPerson) {
+          triggerAction("Unattended Room: No Person Present in Guarded Scene!");
+        }
+      }
+
+      // 9. High Occupancy / Crowd Alert
+      if (rule.event === "crowd_detected") {
+        const personCount = detections.filter((d) => d.label === "person").length;
+        const crowdThreshold = rule.threshold || 3;
+        if (personCount >= crowdThreshold) {
+          triggerAction(`High Occupancy Alert: ${personCount} People in Frame!`);
+        }
+      }
+
+      // 10. Restricted Zone / Tripwire Entry
+      if (rule.event === "tripwire_entry") {
+        const inTripwire = detections.some((d) => d.box && (d.box[1] < 0.15 || d.box[3] > 0.85));
+        if (inTripwire) {
+          triggerAction("Restricted Zone / Tripwire Boundary Crossed!");
+        }
+      }
+
+      // 11. Unattended / Abandoned Object
+      if (rule.event === "abandoned_object") {
+        const hasPerson = detections.some((d) => d.label === "person");
+        const hasStationaryObject = detections.some((d) => d.label !== "person" && !d.isMoving);
+        if (!hasPerson && hasStationaryObject) {
+          triggerAction("Unattended Object Detected Without Person Present!");
+        }
+      }
+    });
+  }, [
+    cameraStatus,
+    isDetecting,
+    tamperStatus,
+    missingItems,
+    isGuarded,
+    detections,
+    rules,
+    completedMetrics,
+    latestMetricsRef,
+    activeMovingCount,
+    guardedCount,
+    activeTracksMap,
+    alarmNotice,
+    captureLiveSnapshotFile,
+  ]);
+
   return (
     <div className="app-shell">
+      {isScreenFlashing && <div className="screen-flash-overlay" aria-hidden="true" />}
       <Header
         backendStatus={backendStatus}
         healthInfo={healthInfo}
@@ -623,6 +834,34 @@ export function App() {
               Note: If using Render Free tier, the backend spins down after 15 minutes of inactivity and may take 30–60 seconds to wake up.
             </p>
           )}
+        </div>
+      )}
+
+      {/* Active Siren / Security Alarm Banner */}
+      {alarmNotice && (
+        <div className="siren-active-banner" role="alert">
+          <div style={{ display: "flex", alignItems: "center", gap: "12px", fontWeight: "600" }}>
+            <FiAlertTriangle style={{ fontSize: "1.4rem" }} />
+            <div>
+              <div style={{ fontSize: "0.95rem", letterSpacing: "0.5px" }}>SECURITY RULE TRIGGERED</div>
+              <div style={{ fontSize: "0.85rem", opacity: 0.9 }}>{alarmNotice.reason}</div>
+            </div>
+          </div>
+          <button
+            type="button"
+            className="btn btn-secondary"
+            onClick={handleSilenceAlarm}
+            style={{
+              background: "#ffffff",
+              color: "#dc2626",
+              fontWeight: "bold",
+              border: "none",
+              padding: "8px 18px",
+              cursor: "pointer",
+            }}
+          >
+            Silence Alarm / Disarm
+          </button>
         </div>
       )}
 
@@ -662,13 +901,15 @@ export function App() {
               border: "none",
               color: "inherit",
               cursor: "pointer",
-              fontSize: "1.2rem",
+              fontSize: "1.1rem",
               padding: "0 6px",
-              lineHeight: 1,
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
             }}
             title="Dismiss notice"
           >
-            ×
+            <FiX />
           </button>
         </div>
       )}
@@ -718,6 +959,8 @@ export function App() {
             onStartCamera={startCamera}
             onStopCamera={handleStopCamera}
             onToggleDetection={toggleDetection}
+            onOpenRulesModal={() => setIsRulesModalOpen(true)}
+            activeRulesCount={rules.length}
           />
         </div>
 
@@ -753,6 +996,13 @@ export function App() {
         metrics={completedMetrics || latestMetricsRef.current}
         activeTab={metricsModalTab}
         isCopiedExternal={copiedSummaryTick}
+      />
+
+      <RulesModal
+        isOpen={isRulesModalOpen}
+        onClose={() => setIsRulesModalOpen(false)}
+        rules={rules}
+        onSaveRules={handleSaveRules}
       />
 
       <ChatCopilot

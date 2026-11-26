@@ -234,6 +234,50 @@ export async function sendMetricsEmail(
 
 
 /**
+ * Dispatch session metrics summary via SMS to specified recipient.
+ * @param {Object} metrics - Structured session metrics object
+ * @param {string} [recipientPhone] - Destination phone (falls back to backend RECIPIENT_PHONE_NUMBER if omitted)
+ * @param {AbortSignal} [signal]
+ */
+export async function sendMetricsSMS(
+  metrics,
+  recipientPhone,
+  signal
+) {
+  let response;
+  try {
+    const payload = { metrics };
+    if (recipientPhone && recipientPhone.trim()) {
+      payload.recipient_phone = recipientPhone.trim();
+    }
+
+    response = await fetch(`${API_BASE_URL}/metrics/sms`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Accept: "application/json",
+      },
+      body: JSON.stringify(payload),
+      signal,
+    });
+  } catch (err) {
+    if (err.name === "AbortError") throw err;
+    throw new ApiError(
+      `Cannot reach backend at ${API_BASE_URL}. Ensure the server is running.`,
+      0
+    );
+  }
+
+  if (!response.ok) {
+    const detail = await parseErrorMessage(response);
+    throw new ApiError(detail, response.status);
+  }
+
+  return response.json();
+}
+
+
+/**
  * Fetch all saved custom visual-prompt reference items.
  * @param {AbortSignal} [signal]
  */
